@@ -1,6 +1,6 @@
 # goobs-cache
 
-A versatile and efficient caching solution with two-level caching, encryption, compression, and multiple storage options. goobs-cache is designed to provide high-performance caching capabilities for TypeScript and Node.js applications, with a focus on data security, scalability, and extensibility.
+A versatile and efficient caching solution with two-level caching, encryption, compression, and multiple storage options. goobs-cache is designed to provide high-performance caching capabilities for TypeScript and Node.js applications, with a focus on data security, scalability, and extensibility. A lightweight powerful redis alternative
 
 ## Features
 
@@ -112,8 +112,13 @@ goobs-cache is developed and maintained by Matthew Goluba.
 If you have any questions, suggestions, or feedback, please feel free to reach out to us through the following channels:
 
 GitHub Issues: https://github.com/goobz22/goobs-cache/issues
+
 Email: mkgoluba@technologiesunlimited.net
 
 We appreciate your interest in goobs-cache and look forward to hearing from you.
+
+Use as you see fit. 
+
+If you need expanded capabilities or have input on the current state of things feel free to comment. Going to include testing and monitoring and logging to allow ability to see cache hits and database usage. Believe there is a good opportunity for doing data backups through logging the flow of data to the database. Prefetching can and will be optimized.
 
 Happy caching!

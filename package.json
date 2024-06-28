@@ -1,6 +1,6 @@
 {
   "name": "goobs-cache",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A versatile and efficient caching solution with two-level caching, encryption, compression, and multiple storage options",
   "main": "src/index.ts",
   "types": "src/index.ts",

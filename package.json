@@ -1,0 +1,75 @@
+{
+  "name": "goobs-cache",
+  "version": "1.0.0",
+  "description": "A versatile and efficient caching solution with two-level caching, encryption, compression, and multiple storage options",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit && prettier --write \"src/**/*.{ts,tsx}\"",
+    "typecheck": "tsc --noEmit",
+    "pretty": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "prepublishOnly": "yarn build",
+    "publish-package": "npm publish"
+  },
+  "devDependencies": {
+    "@types/aws4": "^1.11.6",
+    "@types/lru-cache": "^7.10.10",
+    "@types/mongodb": "^4.0.7",
+    "@types/node": "^20.14.9",
+    "prettier": "^3.3.2",
+    "typescript": "^5.5.2"
+  },
+  "dependencies": {
+    "aws4": "^1.13.0",
+    "lru-cache": "^10.3.0",
+    "mongodb": "^6.8.0"
+  },
+  "files": [
+    "src"
+  ],
+  "keywords": [
+    "caching",
+    "cache",
+    "two-level-cache",
+    "multilevel-cache",
+    "tiered-cache",
+    "encryption",
+    "data-encryption",
+    "secure-storage",
+    "compression",
+    "data-compression",
+    "memory-cache",
+    "in-memory-cache",
+    "mongodb-storage",
+    "persistent-storage",
+    "lru-cache",
+    "least-recently-used",
+    "batch-writing",
+    "batch-processing",
+    "prefetching",
+    "data-prefetching",
+    "access-tracking",
+    "usage-tracking",
+    "key-rotation",
+    "encryption-key-rotation",
+    "typescript",
+    "nodejs",
+    "data-storage",
+    "high-performance",
+    "scalability",
+    "fault-tolerance",
+    "data-integrity",
+    "data-security",
+    "configurable",
+    "customizable",
+    "modular",
+    "extensible",
+    "open-source"
+  ],
+  "author": "Matthew Goluba",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/goobz22/goobs-cache"
+  }
+}

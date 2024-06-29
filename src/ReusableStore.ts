@@ -21,6 +21,11 @@ import { createBatchWriter, addToBatch, stopBatchWriter } from './utils/BatchWri
 import getConfig from './config/config';
 import { DataValue, EncryptedValue } from './types/DataTypes';
 import { StorageInterface } from './storage/StorageInterface';
+import {
+  getFromClientSessionCache,
+  setToClientSessionCache,
+  removeFromClientSessionCache,
+} from './cache/ClientSessionCache';
 
 /**
  * storeInstance represents the instance of the store, which includes the cache,
@@ -96,35 +101,62 @@ async function getOrCreateStoreInstance() {
  * @param key The key of the item to set.
  * @param value The value of the item to set.
  * @param expirationDate The expiration date of the item.
+ * @param mode The mode of the store ('server' or 'client').
  */
-export async function set(key: string, value: DataValue, expirationDate: Date): Promise<void> {
-  const store = await getOrCreateStoreInstance();
-  const compressedValue = await compressData(JSON.stringify(value));
-  const { encryptedData, authTag, keyId } = await encrypt(compressedValue.toString('base64'));
-  const encryptedValue: EncryptedValue = { encryptedData, authTag, keyId, type: value.type };
-  await setToTwoLevelCache(store.cache, key, encryptedValue, expirationDate);
-  await addToBatch(store.batchWriter, key, encryptedValue, expirationDate);
-  await recordAccess(key);
+export async function set(
+  key: string,
+  value: DataValue,
+  expirationDate: Date,
+  mode: 'server' | 'client',
+): Promise<void> {
+  if (mode === 'server') {
+    const store = await getOrCreateStoreInstance();
+    const compressedValue = await compressData(JSON.stringify(value));
+    const { encryptedData, authTag, keyId } = await encrypt(compressedValue.toString('base64'));
+    const encryptedValue: EncryptedValue = { encryptedData, authTag, keyId, type: value.type };
+    await setToTwoLevelCache(store.cache, key, encryptedValue, expirationDate);
+    await addToBatch(store.batchWriter, key, encryptedValue, expirationDate);
+    await recordAccess(key);
+  } else {
+    const compressedValue = await compressData(JSON.stringify(value));
+    const { encryptedData, authTag, keyId } = await encrypt(compressedValue.toString('base64'));
+    const encryptedValue: EncryptedValue = { encryptedData, authTag, keyId, type: value.type };
+    setToClientSessionCache(key, encryptedValue, expirationDate);
+  }
 }
 
 /**
  * get function retrieves the value associated with a key from the store.
  * It retrieves the item from the cache, decrypts and decompresses the value, and records the access of the key.
  * @param key The key of the item to retrieve.
+ * @param mode The mode of the store ('server' or 'client').
  * @returns The value associated with the key, or undefined if not found.
  */
-export async function get(key: string): Promise<string | undefined> {
-  const store = await getOrCreateStoreInstance();
-  const cachedItem = await getFromTwoLevelCache(store.cache, key);
-  if (cachedItem && 'encryptedData' in cachedItem) {
-    const { encryptedData, authTag, keyId, type } = cachedItem as EncryptedValue;
-    const decrypted = await decrypt(encryptedData, authTag, keyId);
-    const decompressed = await decompressData(Buffer.from(decrypted, 'base64'));
-    await recordAccess(key);
-    const value = JSON.parse(decompressed);
+export async function get(key: string, mode: 'server' | 'client'): Promise<string | undefined> {
+  if (mode === 'server') {
+    const store = await getOrCreateStoreInstance();
+    const cachedItem = await getFromTwoLevelCache(store.cache, key);
+    if (cachedItem && 'encryptedData' in cachedItem) {
+      const { encryptedData, authTag, keyId, type } = cachedItem as EncryptedValue;
+      const decrypted = await decrypt(encryptedData, authTag, keyId);
+      const decompressed = await decompressData(Buffer.from(decrypted, 'base64'));
+      await recordAccess(key);
+      const value = JSON.parse(decompressed);
 
-    // Return the value directly, not as an object
-    return value.value;
+      // Return the value directly, not as an object
+      return value.value;
+    }
+  } else {
+    const cachedItem = getFromClientSessionCache(key);
+    if (cachedItem && 'encryptedData' in cachedItem.value) {
+      const { encryptedData, authTag, keyId, type } = cachedItem.value;
+      const decrypted = await decrypt(encryptedData, authTag, keyId);
+      const decompressed = await decompressData(Buffer.from(decrypted, 'base64'));
+      const value = JSON.parse(decompressed);
+
+      // Return the value directly, not as an object
+      return value.value;
+    }
   }
   return undefined;
 }
@@ -133,11 +165,16 @@ export async function get(key: string): Promise<string | undefined> {
  * remove function removes an item from the store by its key.
  * It removes the item from the cache, and the storage removal will be handled by the BatchWriter.
  * @param key The key of the item to remove.
+ * @param mode The mode of the store ('server' or 'client').
  */
-export async function remove(key: string): Promise<void> {
-  const store = await getOrCreateStoreInstance();
-  await removeFromTwoLevelCache(store.cache, key);
-  // The storage removal will be handled by the BatchWriter
+export async function remove(key: string, mode: 'server' | 'client'): Promise<void> {
+  if (mode === 'server') {
+    const store = await getOrCreateStoreInstance();
+    await removeFromTwoLevelCache(store.cache, key);
+    // The storage removal will be handled by the BatchWriter
+  } else {
+    removeFromClientSessionCache(key);
+  }
 }
 
 /**

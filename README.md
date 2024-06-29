@@ -117,7 +117,7 @@ Email: mkgoluba@technologiesunlimited.net
 
 We appreciate your interest in goobs-cache and look forward to hearing from you.
 
-Use as you see fit. 
+Use as you see fit.
 
 If you need expanded capabilities or have input on the current state of things feel free to comment. Going to include testing and monitoring and logging to allow ability to see cache hits and database usage. Believe there is a good opportunity for doing data backups through logging the flow of data to the database. Prefetching can and will be optimized.
 

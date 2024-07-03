@@ -141,6 +141,7 @@ goobs-cache is developed and maintained by Matthew Goluba.
 For questions, suggestions, or feedback, reach out through:
 
 GitHub Issues: https://github.com/goobz22/goobs-cache/issues
+
 Email: mkgoluba@technologiesunlimited.net
 
 We're excited about goobs-cache and its potential to streamline data management in web applications. Your feedback is crucial in helping us improve and expand the capabilities of goobs-cache.

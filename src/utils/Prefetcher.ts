@@ -1,21 +1,11 @@
 'use server';
-import {
-  TwoLevelCacheImplementation,
-  getFromTwoLevelCache,
-  setToTwoLevelCache,
-} from '../cache/TwoLevelCache';
-import {
-  AccessTrackerImplementation,
-  getFrequentKeys,
-  getPredictedNextKeys,
-} from './AccessTracker';
-import getConfig from '../config/config';
+import { TwoLevelCacheImplementation, AccessTrackerImplementation, CacheConfig } from '../types';
 
 /**
  * PrefetcherImplementation interface defines the methods that a prefetcher implementation should provide.
  * It includes methods for prefetching frequent items and prefetching related items based on a given key.
  */
-interface PrefetcherImplementation {
+export interface PrefetcherImplementation {
   /**
    * prefetchFrequentItems method prefetches frequent items based on the prefetch threshold.
    * It retrieves the frequent keys from the access tracker and prefetches the corresponding values into the cache.
@@ -34,43 +24,34 @@ let prefetcherInstance: PrefetcherImplementation | null = null;
 
 /**
  * createPrefetcherImplementation function creates a new instance of the PrefetcherImplementation.
- * It takes a two-level cache implementation and an access tracker implementation as parameters.
+ * It takes a two-level cache implementation, an access tracker implementation, and a cache config as parameters.
  * @param cache The two-level cache implementation to use for prefetching.
  * @param accessTracker The access tracker implementation to use for retrieving frequent and related keys.
+ * @param config The cache configuration.
  * @returns A Promise that resolves to an instance of the PrefetcherImplementation.
  */
 async function createPrefetcherImplementation(
   cache: TwoLevelCacheImplementation,
   accessTracker: AccessTrackerImplementation,
+  config: CacheConfig,
 ): Promise<PrefetcherImplementation> {
-  const config = await getConfig();
-
   return {
     async prefetchFrequentItems(): Promise<void> {
-      const frequentKeys = await getFrequentKeys(config.prefetchThreshold);
+      const frequentKeys = await accessTracker.getFrequentKeys(config.prefetchThreshold);
       for (const key of frequentKeys) {
-        if (!(await getFromTwoLevelCache(cache, key))) {
-          const value = await getFromTwoLevelCache(cache, key);
-          if (value) {
-            await setToTwoLevelCache(cache, key, value, new Date(Date.now() + config.cacheMaxAge));
-          }
+        const value = await cache.get(key);
+        if (value) {
+          await cache.set(key, value, new Date(Date.now() + config.cacheMaxAge));
         }
       }
     },
 
     async prefetchRelatedItems(key: string): Promise<void> {
-      const relatedKeys = await getPredictedNextKeys(key);
+      const relatedKeys = await accessTracker.getPredictedNextKeys(key);
       for (const relatedKey of relatedKeys) {
-        if (!(await getFromTwoLevelCache(cache, relatedKey))) {
-          const value = await getFromTwoLevelCache(cache, relatedKey);
-          if (value) {
-            await setToTwoLevelCache(
-              cache,
-              relatedKey,
-              value,
-              new Date(Date.now() + config.cacheMaxAge),
-            );
-          }
+        const value = await cache.get(relatedKey);
+        if (value) {
+          await cache.set(relatedKey, value, new Date(Date.now() + config.cacheMaxAge));
         }
       }
     },
@@ -79,17 +60,19 @@ async function createPrefetcherImplementation(
 
 /**
  * createPrefetcher function creates a new instance of the PrefetcherImplementation.
- * It takes a two-level cache implementation and an access tracker implementation as parameters.
+ * It takes a two-level cache implementation, an access tracker implementation, and a cache config as parameters.
  * @param cache The two-level cache implementation to use for prefetching.
  * @param accessTracker The access tracker implementation to use for retrieving frequent and related keys.
+ * @param config The cache configuration.
  * @returns A Promise that resolves to an instance of the PrefetcherImplementation.
  */
 export async function createPrefetcher(
   cache: TwoLevelCacheImplementation,
   accessTracker: AccessTrackerImplementation,
+  config: CacheConfig,
 ): Promise<PrefetcherImplementation> {
   if (!prefetcherInstance) {
-    prefetcherInstance = await createPrefetcherImplementation(cache, accessTracker);
+    prefetcherInstance = await createPrefetcherImplementation(cache, accessTracker, config);
   }
   return prefetcherInstance;
 }

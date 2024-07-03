@@ -1,34 +1,13 @@
 'use server';
-import { StorageInterface, CacheItem } from '../storage/StorageInterface';
-import { EncryptedValue } from '../types/DataTypes';
-
-/**
- * BatchWriterImplementation interface defines the methods that a batch writer implementation should provide.
- * It includes methods for adding items to the batch, flushing the batch, and stopping the writer.
- */
-interface BatchWriterImplementation {
-  /**
-   * add method adds a key-value pair with an expiration date to the batch.
-   * @param key The key of the item to add.
-   * @param value The encrypted value of the item to add.
-   * @param expirationDate The expiration date of the item.
-   */
-  add(key: string, value: EncryptedValue, expirationDate: Date): Promise<void>;
-
-  /**
-   * flush method flushes the current batch, persisting the items to storage.
-   */
-  flush(): Promise<void>;
-
-  /**
-   * stop method stops the batch writer, flushing any remaining items and clearing the interval.
-   */
-  stop(): Promise<void>;
-}
+import { StorageInterface, EncryptedValue, CacheItem, BatchWriterImplementation } from '../types';
 
 /**
  * BatchWriterState interface represents the state of the batch writer.
  * It includes the current batch, the flush promise, and the flush interval.
+ *
+ * - batch: A Map object that stores the key-value pairs of cache items to be written in a batch.
+ * - flushPromise: A Promise that represents the current flush operation. It is used to ensure that only one flush operation is running at a time.
+ * - flushInterval: A reference to the interval that periodically flushes the batch automatically.
  */
 interface BatchWriterState {
   batch: Map<string, CacheItem<EncryptedValue>>;
@@ -42,6 +21,20 @@ let writerState: BatchWriterState | null = null;
 /**
  * createBatchWriterImplementation function creates a new instance of the BatchWriterImplementation.
  * It takes a storage interface, batch size, and flush interval as parameters.
+ *
+ * The function initializes the writerState with an empty batch, null flushPromise, and null flushInterval.
+ *
+ * It defines two inner functions:
+ * - persistBatch: Persists a batch of items to storage by iterating over the batch and calling the set method of the storage interface for each item.
+ * - flush: Flushes the current batch, persisting the items to storage. It ensures that only one flush operation is running at a time by checking the flushPromise. If a flush operation is already in progress, it waits for it to complete before proceeding. It creates a new Map object with the current batch items, clears the current batch, and assigns the persistBatch operation to flushPromise. Once the persist operation is complete, it sets flushPromise back to null.
+ *
+ * The function starts an interval that periodically calls the flush function based on the provided flushIntervalMs.
+ *
+ * Finally, it returns an object that implements the BatchWriterImplementation interface, with the following methods:
+ * - add: Adds a key-value pair with an expiration date to the current batch. If the batch size reaches the provided batchSize, it triggers a flush operation.
+ * - flush: Exposes the flush function to allow manual flushing of the current batch.
+ * - stop: Stops the batch writer by clearing the flush interval and flushing any remaining items in the batch.
+ *
  * @param storage The storage interface to use for persisting the batched items.
  * @param batchSize The maximum number of items to store in a batch before flushing.
  * @param flushIntervalMs The interval (in milliseconds) at which to flush the batch automatically.
@@ -58,10 +51,6 @@ function createBatchWriterImplementation(
     flushInterval: null,
   };
 
-  /**
-   * persistBatch function persists a batch of items to storage.
-   * @param batch The batch of items to persist.
-   */
   async function persistBatch(batch: Map<string, CacheItem<EncryptedValue>>): Promise<void> {
     for (const [key, item] of batch.entries()) {
       await storage.set(key, item);
@@ -69,10 +58,6 @@ function createBatchWriterImplementation(
     console.log(`Batch of ${batch.size} items persisted to storage`);
   }
 
-  /**
-   * flush function flushes the current batch, persisting the items to storage.
-   * It ensures that only one flush operation is running at a time.
-   */
   async function flush(): Promise<void> {
     if (!writerState) return;
     if (writerState.flushPromise) {
@@ -94,7 +79,14 @@ function createBatchWriterImplementation(
   return {
     async add(key: string, value: EncryptedValue, expirationDate: Date): Promise<void> {
       if (!writerState) return;
-      writerState.batch.set(key, { value, lastAccessed: Date.now(), expirationDate });
+      writerState.batch.set(key, {
+        value,
+        lastAccessed: Date.now(),
+        expirationDate,
+        hitCount: 0,
+        compressed: false,
+        size: Buffer.from(JSON.stringify(value)).length,
+      });
       if (writerState.batch.size >= batchSize) {
         await flush();
       }
@@ -114,6 +106,9 @@ function createBatchWriterImplementation(
 /**
  * createBatchWriter function creates a new instance of the BatchWriterImplementation.
  * It takes a storage interface, batch size, and flush interval as parameters.
+ *
+ * If a writerInstance does not exist, it calls the createBatchWriterImplementation function to create a new instance and assigns it to writerInstance.
+ *
  * @param storage The storage interface to use for persisting the batched items.
  * @param batchSize The maximum number of items to store in a batch before flushing.
  * @param flushIntervalMs The interval (in milliseconds) at which to flush the batch automatically.
@@ -132,6 +127,9 @@ export async function createBatchWriter(
 
 /**
  * addToBatch function adds a key-value pair with an expiration date to the batch using the provided batch writer.
+ *
+ * It calls the add method of the provided BatchWriterImplementation instance with the given key, value, and expirationDate.
+ *
  * @param writer The batch writer to use for adding the item.
  * @param key The key of the item to add.
  * @param value The encrypted value of the item to add.
@@ -148,6 +146,9 @@ export async function addToBatch(
 
 /**
  * flushBatch function flushes the current batch using the provided batch writer.
+ *
+ * It calls the flush method of the provided BatchWriterImplementation instance.
+ *
  * @param writer The batch writer to use for flushing the batch.
  */
 export async function flushBatch(writer: BatchWriterImplementation): Promise<void> {
@@ -156,8 +157,13 @@ export async function flushBatch(writer: BatchWriterImplementation): Promise<voi
 
 /**
  * stopBatchWriter function stops the batch writer, flushing any remaining items and clearing the interval.
+ *
+ * It calls the stop method of the provided BatchWriterImplementation instance.
+ *
  * @param writer The batch writer to stop.
  */
 export async function stopBatchWriter(writer: BatchWriterImplementation): Promise<void> {
   await writer.stop();
 }
+
+export type { BatchWriterImplementation };

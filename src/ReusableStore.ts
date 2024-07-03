@@ -1,64 +1,111 @@
 'use server';
 
+import fs from 'fs/promises';
+import path from 'path';
 import {
   createTwoLevelCache,
   getFromTwoLevelCache,
   setToTwoLevelCache,
   removeFromTwoLevelCache,
-} from './cache/TwoLevelCache';
-import { createMemoryStorage } from './storage/MemoryStorage';
-import { createMongoDbStorage, closeMongoDbConnection } from './storage/MongoDbStorage';
+  TwoLevelCacheImplementation,
+} from './cache/TwoLevelServerCache';
 import {
-  encrypt,
-  decrypt,
-  rotateEncryptionKey,
-  getLastRotationTime,
-} from './encryption/EncryptionUtility';
-import { compressData, decompressData } from './compression/CompressionUtility';
-import { createAccessTracker, recordAccess } from './utils/AccessTracker';
-import { createPrefetcher, prefetchFrequentItems } from './utils/Prefetcher';
-import { createBatchWriter, addToBatch, stopBatchWriter } from './utils/BatchWriter';
-import getConfig from './config/config';
-import { DataValue, EncryptedValue } from './types/DataTypes';
-import { StorageInterface } from './storage/StorageInterface';
+  createMemoryCache,
+  getFromMemoryCache,
+  setToMemoryCache,
+  deleteFromMemoryCache,
+  MemoryCacheImplementation,
+  createMemoryStorage,
+} from './cache/MemoryCache';
+import { encrypt, decrypt } from './utils/Encryption';
+import { compressData, decompressData } from './utils/Compression';
 import {
-  getFromClientSessionCache,
-  setToClientSessionCache,
-  removeFromClientSessionCache,
-} from './cache/ClientSessionCache';
+  createAccessTracker,
+  recordAccess,
+  AccessTrackerImplementation,
+} from './utils/AccessTracker';
+import {
+  createPrefetcher,
+  prefetchFrequentItems,
+  PrefetcherImplementation,
+} from './utils/Prefetcher';
+import {
+  createBatchWriter,
+  addToBatch,
+  stopBatchWriter,
+  BatchWriterImplementation,
+} from './utils/BatchWriter';
+import { EncryptedValue, CacheConfig, DataValue, StorageInterface, EvictionPolicy } from './types';
+import ClientSessionCache from './cache/ClientSessionCache';
 
 /**
- * storeInstance represents the instance of the store, which includes the cache,
- * storage, access tracker, prefetcher, and batch writer.
+ * StoreInstance interface represents the core components of the storage system.
+ * It includes the server cache, memory cache, storage, access tracker, prefetcher, and batch writer.
  */
-let storeInstance: {
-  cache: Awaited<ReturnType<typeof createTwoLevelCache>>;
+interface StoreInstance {
+  serverCache: TwoLevelCacheImplementation;
+  memoryCache: MemoryCacheImplementation<EncryptedValue>;
   storage: StorageInterface;
-  accessTracker: Awaited<ReturnType<typeof createAccessTracker>>;
-  prefetcher: Awaited<ReturnType<typeof createPrefetcher>>;
-  batchWriter: Awaited<ReturnType<typeof createBatchWriter>>;
-} | null = null;
+  accessTracker: AccessTrackerImplementation;
+  prefetcher: PrefetcherImplementation;
+  batchWriter: BatchWriterImplementation;
+  config: CacheConfig;
+}
+
+// Global variable to hold the singleton instance of StoreInstance
+let storeInstance: StoreInstance | null = null;
 
 /**
- * keyRotationInterval represents the interval for checking and performing key rotation.
+ * Loads the configuration from the .reusablestore.json file.
+ * If the file is not found or fails to load, it falls back to the default configuration.
+ * @returns A Promise that resolves to the CacheConfig object.
  */
-let keyRotationInterval: NodeJS.Timeout | null = null;
+async function loadConfig(): Promise<CacheConfig> {
+  const defaultConfig: CacheConfig = {
+    algorithm: 'aes-256-gcm',
+    keyCheckIntervalMs: 86400000,
+    keyRotationIntervalMs: 7776000000,
+    compressionLevel: -1,
+    cacheSize: 10000,
+    cacheMaxAge: 86400000,
+    persistenceInterval: 600000,
+    maxMemoryUsage: 1073741824,
+    evictionPolicy: 'lru' as EvictionPolicy,
+    forceReset: false,
+    prefetchThreshold: 5,
+    batchSize: 100,
+    autoTuneInterval: 3600000,
+    keySize: 256,
+  };
+
+  const configPath = path.resolve(process.cwd(), '.reusablestore.json');
+
+  try {
+    const configFile = await fs.readFile(configPath, 'utf-8');
+    const userConfig = JSON.parse(configFile);
+    return { ...defaultConfig, ...userConfig };
+  } catch (error) {
+    return defaultConfig;
+  }
+}
 
 /**
- * getOrCreateStoreInstance function retrieves the existing store instance or creates a new one if it doesn't exist.
- * It initializes the cache, storage, access tracker, prefetcher, and batch writer based on the configuration.
- * It also starts periodic tasks such as prefetching frequent items and checking for key rotation.
- * @returns The store instance.
+ * getOrCreateStoreInstance function creates a new StoreInstance if one doesn't exist,
+ * or returns the existing instance if it has already been created.
+ * This implements the singleton pattern for the store instance.
+ * It initializes the server cache, memory cache, access tracker, prefetcher, and batch writer.
+ * It also sets up periodic prefetching of frequently accessed items.
+ * @returns A Promise that resolves to the StoreInstance.
  */
-async function getOrCreateStoreInstance() {
+async function getOrCreateStoreInstance(): Promise<StoreInstance> {
   if (!storeInstance) {
-    const config = await getConfig();
-    const storage =
-      config.storageType === 'mongodb' ? await createMongoDbStorage() : await createMemoryStorage();
+    const config = await loadConfig();
+    const storage = await createMemoryStorage(config);
 
-    const cache = await createTwoLevelCache(storage);
+    const serverCache = await createTwoLevelCache(storage, config);
+    const memoryCache = await createMemoryCache<EncryptedValue>(config);
     const accessTracker = await createAccessTracker();
-    const prefetcher = await createPrefetcher(cache, accessTracker);
+    const prefetcher = await createPrefetcher(serverCache, accessTracker, config);
     const batchWriter = await createBatchWriter(
       storage,
       config.batchSize,
@@ -66,132 +113,169 @@ async function getOrCreateStoreInstance() {
     );
 
     storeInstance = {
-      cache,
+      serverCache,
+      memoryCache,
       storage,
       accessTracker,
       prefetcher,
       batchWriter,
+      config,
     };
 
-    // Start periodic tasks
-    setInterval(() => prefetchFrequentItems(prefetcher), config.prefetchInterval);
-
-    // Set up key rotation check
-    if (!keyRotationInterval) {
-      keyRotationInterval = setInterval(
-        async () => {
-          const currentTime = Date.now();
-          const lastRotation = await getLastRotationTime();
-          if (currentTime - lastRotation >= config.keyRotationIntervalMs) {
-            await rotateEncryptionKey();
-          }
-        },
-        Math.min(3600000, config.keyRotationIntervalMs),
-      ); // Check every hour or at the rotation interval, whichever is shorter
-    }
+    // Set up periodic prefetching of frequently accessed items
+    setInterval(() => prefetchFrequentItems(prefetcher), config.persistenceInterval);
   }
 
   return storeInstance;
 }
 
 /**
- * set function sets a key-value pair in the store with an expiration date.
- * It compresses and encrypts the value before storing it in the cache and adding it to the batch writer.
- * It also records the access of the key.
- * @param key The key of the item to set.
- * @param value The value of the item to set.
- * @param expirationDate The expiration date of the item.
- * @param mode The mode of the store ('server' or 'client').
+ * set function stores a value in the cache and adds it to the batch writer for persistence.
+ * It handles compression, encryption, and different storage modes (server, client, or memory).
+ * @param key The key under which to store the value.
+ * @param value The value to store.
+ * @param expirationDate The date when this value should expire.
+ * @param mode The storage mode: 'server', 'client', or 'memory'.
  */
-export async function set(
+export async function set<T extends DataValue>(
   key: string,
-  value: DataValue,
+  value: T,
   expirationDate: Date,
-  mode: 'server' | 'client',
+  mode: 'server' | 'client' | 'memory',
 ): Promise<void> {
+  const stringifiedValue = JSON.stringify(value);
+
+  const store = await getOrCreateStoreInstance();
+
+  // Compress the stringified value
+  let compressedValue: Buffer;
+  try {
+    compressedValue = await compressData(stringifiedValue);
+  } catch (error) {
+    compressedValue = Buffer.from(stringifiedValue);
+  }
+
+  // Encrypt the compressed value
+  const { encryptedData, iv, authTag, encryptionKey } = await encrypt(
+    compressedValue.toString('base64'),
+    store.config,
+  );
+
+  /**
+   * getValueType function determines the type of the value for storing in the encrypted value object.
+   * It checks for specific types like array, object, and primitive types.
+   * @param value The value to determine the type of.
+   * @returns A string representing the type of the value.
+   */
+  function getValueType(value: DataValue): string {
+    if (Array.isArray(value)) {
+      return 'array';
+    } else if (typeof value === 'object' && value !== null) {
+      if ('type' in value && typeof value.type === 'string') {
+        return value.type;
+      }
+      return 'object';
+    }
+    return typeof value;
+  }
+
+  const encryptedValue: EncryptedValue = {
+    encryptedData,
+    iv,
+    authTag: authTag || '',
+    encryptionKey,
+    type: getValueType(value),
+  };
+
   if (mode === 'server') {
-    const store = await getOrCreateStoreInstance();
-    const compressedValue = await compressData(JSON.stringify(value));
-    const { encryptedData, authTag, keyId } = await encrypt(compressedValue.toString('base64'));
-    const encryptedValue: EncryptedValue = { encryptedData, authTag, keyId, type: value.type };
-    await setToTwoLevelCache(store.cache, key, encryptedValue, expirationDate);
+    await setToTwoLevelCache(store.serverCache, key, encryptedValue, expirationDate);
     await addToBatch(store.batchWriter, key, encryptedValue, expirationDate);
     await recordAccess(key);
-  } else {
-    const compressedValue = await compressData(JSON.stringify(value));
-    const { encryptedData, authTag, keyId } = await encrypt(compressedValue.toString('base64'));
-    const encryptedValue: EncryptedValue = { encryptedData, authTag, keyId, type: value.type };
-    setToClientSessionCache(key, encryptedValue, expirationDate);
+  } else if (mode === 'client') {
+    ClientSessionCache.setToClientSessionCache(key, encryptedValue, expirationDate);
+  } else if (mode === 'memory') {
+    await setToMemoryCache(store.memoryCache, key, encryptedValue, expirationDate);
   }
 }
 
 /**
- * get function retrieves the value associated with a key from the store.
- * It retrieves the item from the cache, decrypts and decompresses the value, and records the access of the key.
- * @param key The key of the item to retrieve.
- * @param mode The mode of the store ('server' or 'client').
- * @returns The value associated with the key, or undefined if not found.
+ * get function retrieves a value from the cache, handles decryption and decompression,
+ * and supports different storage modes (server, client, or memory).
+ * @param key The key of the value to retrieve.
+ * @param mode The storage mode: 'server', 'client', or 'memory'.
+ * @returns A Promise that resolves to an object containing the retrieved value, or null if not found.
  */
-export async function get(key: string, mode: 'server' | 'client'): Promise<string | undefined> {
+export async function get<T extends DataValue>(
+  key: string,
+  mode: 'server' | 'client' | 'memory',
+): Promise<{ value: T | null }> {
+  let cachedItem: EncryptedValue | undefined;
+
+  const store = await getOrCreateStoreInstance();
+
   if (mode === 'server') {
-    const store = await getOrCreateStoreInstance();
-    const cachedItem = await getFromTwoLevelCache(store.cache, key);
-    if (cachedItem && 'encryptedData' in cachedItem) {
-      const { encryptedData, authTag, keyId, type } = cachedItem as EncryptedValue;
-      const decrypted = await decrypt(encryptedData, authTag, keyId);
-      const decompressed = await decompressData(Buffer.from(decrypted, 'base64'));
-      await recordAccess(key);
-      const value = JSON.parse(decompressed);
+    cachedItem = await getFromTwoLevelCache(store.serverCache, key);
+  } else if (mode === 'client') {
+    const clientCachedItem = ClientSessionCache.getFromClientSessionCache(key);
+    cachedItem = clientCachedItem?.value;
+  } else if (mode === 'memory') {
+    cachedItem = await getFromMemoryCache(store.memoryCache, key);
+  }
 
-      // Return the value directly, not as an object
-      return value.value;
-    }
-  } else {
-    const cachedItem = getFromClientSessionCache(key);
-    if (cachedItem && 'encryptedData' in cachedItem.value) {
-      const { encryptedData, authTag, keyId, type } = cachedItem.value;
-      const decrypted = await decrypt(encryptedData, authTag, keyId);
-      const decompressed = await decompressData(Buffer.from(decrypted, 'base64'));
-      const value = JSON.parse(decompressed);
+  if (cachedItem && 'encryptedData' in cachedItem) {
+    const { encryptedData, iv, authTag, encryptionKey, type } = cachedItem;
 
-      // Return the value directly, not as an object
-      return value.value;
+    try {
+      // Decrypt the data
+      const decrypted = await decrypt(encryptedData, iv, authTag, encryptionKey, store.config);
+
+      // Decompress the decrypted data
+      const decompressed = await decompressData(Buffer.from(decrypted, 'base64'));
+
+      if (mode === 'server') {
+        await recordAccess(key);
+      }
+
+      try {
+        // Parse the decompressed data
+        const parsedValue = JSON.parse(decompressed) as T;
+        return { value: parsedValue };
+      } catch (parseError) {
+        return { value: null };
+      }
+    } catch (error) {
+      return { value: null };
     }
   }
-  return undefined;
+  return { value: null };
 }
 
 /**
- * remove function removes an item from the store by its key.
- * It removes the item from the cache, and the storage removal will be handled by the BatchWriter.
- * @param key The key of the item to remove.
- * @param mode The mode of the store ('server' or 'client').
+ * remove function deletes a value from the cache in the specified mode (server, client, or memory).
+ * @param key The key of the value to remove.
+ * @param mode The storage mode: 'server', 'client', or 'memory'.
  */
-export async function remove(key: string, mode: 'server' | 'client'): Promise<void> {
+export async function remove(key: string, mode: 'server' | 'client' | 'memory'): Promise<void> {
+  const store = await getOrCreateStoreInstance();
+
   if (mode === 'server') {
-    const store = await getOrCreateStoreInstance();
-    await removeFromTwoLevelCache(store.cache, key);
+    await removeFromTwoLevelCache(store.serverCache, key);
     // The storage removal will be handled by the BatchWriter
-  } else {
-    removeFromClientSessionCache(key);
+  } else if (mode === 'client') {
+    ClientSessionCache.removeFromClientSessionCache(key);
+  } else if (mode === 'memory') {
+    await deleteFromMemoryCache(store.memoryCache, key);
   }
 }
 
 /**
- * cleanup function performs cleanup operations for the store.
- * It stops the batch writer, closes the MongoDB connection if applicable,
- * and clears the key rotation interval.
+ * cleanup function performs necessary cleanup operations,
+ * such as stopping the batch writer and clearing the store instance.
  */
 export async function cleanup(): Promise<void> {
-  if (storeInstance) {
-    await stopBatchWriter(storeInstance.batchWriter);
-    if (storeInstance.storage.constructor.name === 'MongoDbStorage') {
-      await closeMongoDbConnection(storeInstance.storage);
-    }
-    if (keyRotationInterval) {
-      clearInterval(keyRotationInterval);
-      keyRotationInterval = null;
-    }
+  const store = await getOrCreateStoreInstance();
+  if (store) {
+    await stopBatchWriter(store.batchWriter);
     storeInstance = null;
   }
 }

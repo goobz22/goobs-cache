@@ -1,7 +1,7 @@
 {
   "name": "goobs-cache",
-  "version": "1.1.0",
-  "description": "A versatile and efficient caching solution with two-level caching, encryption, compression, and multiple storage options",
+  "version": "1.2.0",
+  "description": "A versatile and efficient caching solution with multiple storage options including two-level server caching, client-side session storage, and in-memory caching. Features encryption, compression, and supports flexible data management across different environments.",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
@@ -12,17 +12,14 @@
     "publish-package": "npm publish"
   },
   "devDependencies": {
-    "@types/aws4": "^1.11.6",
-    "@types/lru-cache": "^7.10.10",
-    "@types/mongodb": "^4.0.7",
     "@types/node": "^20.14.9",
     "prettier": "^3.3.2",
     "typescript": "^5.5.2"
   },
   "dependencies": {
-    "aws4": "^1.13.0",
+    "@types/react": "^18.3.3",
     "lru-cache": "^10.3.0",
-    "mongodb": "^6.8.0"
+    "react": "^18.3.1"
   },
   "files": [
     "src"
@@ -40,7 +37,6 @@
     "data-compression",
     "memory-cache",
     "in-memory-cache",
-    "mongodb-storage",
     "persistent-storage",
     "lru-cache",
     "least-recently-used",
@@ -64,7 +60,17 @@
     "customizable",
     "modular",
     "extensible",
-    "open-source"
+    "open-source",
+    "client-side-storage",
+    "session-storage",
+    "browser-storage",
+    "multi-mode-storage",
+    "flexible-storage",
+    "server-side-cache",
+    "client-side-cache",
+    "hybrid-storage",
+    "adaptive-caching",
+    "cross-environment-caching"
   ],
   "author": "Matthew Goluba",
   "license": "MIT",

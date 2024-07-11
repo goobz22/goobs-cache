@@ -8,7 +8,7 @@
 import { DataValue, EncryptedValue, CacheConfig } from './types';
 import CookieCache from './cache/Cookie';
 import SessionStorageCache from './cache/SessionStorage';
-import config from '../.reusablestore.json';
+import config from './../.reusablestore.json';
 
 /**
  * Instantiate the CookieCache and SessionStorageCache with the imported config.

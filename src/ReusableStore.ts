@@ -1,7 +1,23 @@
+/**
+ * @file ReusableStore.ts
+ * @description Provides the main interface for the ReusableStore, handling both server-side and client-side caching operations.
+ */
+
 import { DataValue } from './types';
 
+/** Determines if the code is running on the server or client side. */
 const isServer = typeof window === 'undefined';
 
+/**
+ * Sets a value in the cache.
+ *
+ * @template T
+ * @param {string} key - The key to set.
+ * @param {T} value - The value to set.
+ * @param {Date} expirationDate - The expiration date for the cached item.
+ * @param {'server' | 'client' | 'cookie'} mode - The caching mode to use.
+ * @returns {void | Promise<void>} Void if synchronous, Promise<void> if asynchronous.
+ */
 export function set<T extends DataValue>(
   key: string,
   value: T,
@@ -27,6 +43,14 @@ export function set<T extends DataValue>(
   }
 }
 
+/**
+ * Retrieves a value from the cache.
+ *
+ * @template T
+ * @param {string} key - The key to retrieve.
+ * @param {'server' | 'client' | 'cookie'} mode - The caching mode to use.
+ * @returns {{ value: T | null } | Promise<{ value: T | null }>} The retrieved value or null, either synchronously or as a Promise.
+ */
 export function get<T extends DataValue>(
   key: string,
   mode: 'server' | 'client' | 'cookie',
@@ -45,6 +69,13 @@ export function get<T extends DataValue>(
   return { value: null };
 }
 
+/**
+ * Removes a value from the cache.
+ *
+ * @param {string} key - The key to remove.
+ * @param {'server' | 'client' | 'cookie'} mode - The caching mode to use.
+ * @returns {void | Promise<void>} Void if synchronous, Promise<void> if asynchronous.
+ */
 export function remove(key: string, mode: 'server' | 'client' | 'cookie'): void | Promise<void> {
   if (isServer) {
     if (mode === 'server') {
@@ -63,6 +94,12 @@ export function remove(key: string, mode: 'server' | 'client' | 'cookie'): void 
   }
 }
 
+/**
+ * Cleans up the cache, clearing all items.
+ * This function only has an effect on the server-side cache.
+ *
+ * @returns {Promise<void>} A promise that resolves when the cleanup is complete.
+ */
 export function cleanup(): Promise<void> {
   if (isServer) {
     return import('./ReusableStore.server').then(({ cleanup }) => cleanup());

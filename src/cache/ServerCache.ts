@@ -1,3 +1,8 @@
+/**
+ * @file ServerCache.ts
+ * @description Implements a server-side cache with LRU strategy, compression, encryption, and auto-tuning capabilities.
+ */
+
 'use server';
 
 import { LRUCache } from 'lru-cache';
@@ -13,6 +18,9 @@ import { compressData, decompressData } from '../utils/Compression.server';
 import { encrypt, decrypt } from '../utils/Encryption.server';
 import { autoTune } from '../utils/AutoTune.server';
 
+/**
+ * ServerCache class provides a server-side caching mechanism with LRU strategy, compression, encryption, and auto-tuning.
+ */
 class ServerCache {
   private memoryCache: LRUCache<string, CacheItem<EncryptedValue>>;
   private storage: StorageInterface;
@@ -23,6 +31,11 @@ class ServerCache {
   private totalAccessTime: number = 0;
   private accessCount: number = 0;
 
+  /**
+   * Creates an instance of ServerCache.
+   * @param {StorageInterface} storage - The storage interface to use for persistent storage.
+   * @param {CacheConfig} config - The configuration for the cache.
+   */
   constructor(storage: StorageInterface, config: CacheConfig) {
     this.storage = storage;
     this.config = config;
@@ -38,11 +51,23 @@ class ServerCache {
     setInterval(() => this.runAutoTune(), config.autoTuneInterval);
   }
 
+  /**
+   * Determines if a value should be compressed.
+   * @private
+   * @param {EncryptedValue} value - The value to check for compression.
+   * @returns {boolean} True if the value should be compressed, false otherwise.
+   */
   private shouldCompress(value: EncryptedValue): boolean {
     const stringValue = JSON.stringify(value);
     return stringValue.length > 1024; // Compress if larger than 1KB
   }
 
+  /**
+   * Compresses a cache item if necessary.
+   * @private
+   * @param {CacheItem<EncryptedValue>} item - The cache item to compress.
+   * @returns {Promise<CacheItem<EncryptedValue>>} A promise that resolves to the compressed (or original) cache item.
+   */
   private async compressItem(item: CacheItem<EncryptedValue>): Promise<CacheItem<EncryptedValue>> {
     if (!item.compressed && this.shouldCompress(item.value)) {
       const compressedValue = await compressData(JSON.stringify(item.value));
@@ -56,6 +81,12 @@ class ServerCache {
     return item;
   }
 
+  /**
+   * Decompresses a cache item if it's compressed.
+   * @private
+   * @param {CacheItem<EncryptedValue>} item - The cache item to decompress.
+   * @returns {Promise<EncryptedValue>} A promise that resolves to the decompressed (or original) encrypted value.
+   */
   private async decompressItem(item: CacheItem<EncryptedValue>): Promise<EncryptedValue> {
     if (item.compressed) {
       const decompressedValue = await decompressData(Buffer.from(JSON.stringify(item.value)));
@@ -64,10 +95,22 @@ class ServerCache {
     return item.value;
   }
 
+  /**
+   * Calculates the size of an encrypted value.
+   * @private
+   * @param {EncryptedValue} value - The encrypted value to calculate the size for.
+   * @returns {number} The size of the encrypted value in bytes.
+   */
   private calculateItemSize(value: EncryptedValue): number {
     return Buffer.from(JSON.stringify(value)).length;
   }
 
+  /**
+   * Updates the cache statistics.
+   * @private
+   * @param {boolean} hit - Whether the cache access was a hit or miss.
+   * @param {number} accessTime - The time taken to access the cache.
+   */
   private updateStatistics(hit: boolean, accessTime: number) {
     if (hit) {
       this.hitCount++;
@@ -78,6 +121,11 @@ class ServerCache {
     this.accessCount++;
   }
 
+  /**
+   * Retrieves a value from the cache.
+   * @param {string} key - The key to retrieve.
+   * @returns {Promise<any | undefined>} A promise that resolves to the value or undefined if not found.
+   */
   async get(key: string): Promise<any | undefined> {
     const start = performance.now();
     const memoryItem = this.memoryCache.get(key);
@@ -112,6 +160,13 @@ class ServerCache {
     return undefined;
   }
 
+  /**
+   * Sets a value in the cache.
+   * @param {string} key - The key to set.
+   * @param {any} value - The value to set.
+   * @param {Date} expirationDate - The expiration date for the cached item.
+   * @returns {Promise<void>}
+   */
   async set(key: string, value: any, expirationDate: Date): Promise<void> {
     const encryptedValue = await encrypt(JSON.stringify(value), this.config);
     const item: CacheItem<EncryptedValue> = {
@@ -127,11 +182,20 @@ class ServerCache {
     await this.storage.set(key, compressedItem);
   }
 
+  /**
+   * Removes a value from the cache.
+   * @param {string} key - The key to remove.
+   * @returns {Promise<void>}
+   */
   async remove(key: string): Promise<void> {
     this.memoryCache.delete(key);
     await this.storage.remove(key);
   }
 
+  /**
+   * Clears the entire cache.
+   * @returns {Promise<void>}
+   */
   async clear(): Promise<void> {
     this.memoryCache.clear();
     await this.storage.clear();
@@ -142,6 +206,10 @@ class ServerCache {
     this.accessCount = 0;
   }
 
+  /**
+   * Retrieves the current cache statistics.
+   * @returns {Promise<CacheStatistics>} A promise that resolves to the current cache statistics.
+   */
   async getStatistics(): Promise<CacheStatistics> {
     const storageStats = await this.storage.getStatistics();
     const totalRequests = this.hitCount + this.missCount;
@@ -157,6 +225,11 @@ class ServerCache {
     };
   }
 
+  /**
+   * Sets the eviction policy for the cache.
+   * @param {EvictionPolicy} policy - The eviction policy to set.
+   * @returns {Promise<void>}
+   */
   async setEvictionPolicy(policy: EvictionPolicy): Promise<void> {
     switch (policy) {
       case 'lfu':
@@ -172,6 +245,11 @@ class ServerCache {
     }
   }
 
+  /**
+   * Runs the auto-tuning process for the cache.
+   * @private
+   * @returns {Promise<void>}
+   */
   private async runAutoTune(): Promise<void> {
     const stats = await this.getStatistics();
     const currentSize = this.memoryCache.max;
@@ -192,6 +270,11 @@ class ServerCache {
     this.accessCount = 0;
   }
 
+  /**
+   * Resizes the cache to a new size.
+   * @param {number} newSize - The new size for the cache.
+   * @returns {Promise<void>}
+   */
   async resizeCache(newSize: number): Promise<void> {
     const oldCache = this.memoryCache;
     this.memoryCache = new LRUCache<string, CacheItem<EncryptedValue>>({
@@ -208,6 +291,12 @@ class ServerCache {
   }
 }
 
+/**
+ * Creates a new instance of ServerCache.
+ * @param {StorageInterface} storage - The storage interface to use for persistent storage.
+ * @param {CacheConfig} config - The configuration for the cache.
+ * @returns {Promise<ServerCache>} A promise that resolves to a new ServerCache instance.
+ */
 export async function createServerCache(
   storage: StorageInterface,
   config: CacheConfig,

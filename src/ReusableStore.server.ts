@@ -1,3 +1,8 @@
+/**
+ * @file ReusableStore.server.ts
+ * @description Implements server-side caching functionality with configuration loading and storage interface.
+ */
+
 'use server';
 
 import fs from 'fs/promises';
@@ -12,13 +17,26 @@ import {
   CacheStatistics,
 } from './types';
 
+/**
+ * Represents an instance of the server-side store.
+ * @interface
+ */
 interface StoreInstance {
+  /** The server cache instance. */
   serverCache: ServerCache;
+  /** The cache configuration. */
   config: CacheConfig;
 }
 
+/** Singleton instance of the server-side store. */
 let storeInstance: StoreInstance | null = null;
 
+/**
+ * Loads the cache configuration from a JSON file.
+ *
+ * @returns {Promise<CacheConfig>} A promise that resolves to the cache configuration.
+ * @throws {Error} If the configuration file cannot be loaded or parsed.
+ */
 async function loadConfig(): Promise<CacheConfig> {
   const configPath = path.resolve(process.cwd(), '.reusablestore.json');
   try {
@@ -31,6 +49,11 @@ async function loadConfig(): Promise<CacheConfig> {
   }
 }
 
+/**
+ * Gets or creates a store instance.
+ *
+ * @returns {Promise<StoreInstance>} A promise that resolves to the store instance.
+ */
 async function getOrCreateStoreInstance(): Promise<StoreInstance> {
   if (!storeInstance) {
     const config = await loadConfig();
@@ -67,7 +90,6 @@ async function getOrCreateStoreInstance(): Promise<StoreInstance> {
         // Implement your auto-tuning logic here
       },
     };
-
     const serverCache = await createServerCache(storage, config);
     storeInstance = {
       serverCache,
@@ -77,6 +99,12 @@ async function getOrCreateStoreInstance(): Promise<StoreInstance> {
   return storeInstance;
 }
 
+/**
+ * Determines the type of a given value.
+ *
+ * @param {DataValue} value - The value to check.
+ * @returns {string} The type of the value as a string.
+ */
 function getValueType(value: DataValue): string {
   if (Array.isArray(value)) {
     return 'array';
@@ -89,6 +117,15 @@ function getValueType(value: DataValue): string {
   return typeof value;
 }
 
+/**
+ * Sets a value in the server-side cache.
+ *
+ * @template T
+ * @param {string} key - The key to set.
+ * @param {T} value - The value to set.
+ * @param {Date} expirationDate - The expiration date for the cached item.
+ * @returns {Promise<void>}
+ */
 export async function serverSet<T extends DataValue>(
   key: string,
   value: T,
@@ -98,6 +135,13 @@ export async function serverSet<T extends DataValue>(
   await store.serverCache.set(key, value, expirationDate);
 }
 
+/**
+ * Retrieves a value from the server-side cache.
+ *
+ * @template T
+ * @param {string} key - The key to retrieve.
+ * @returns {Promise<{ value: T | null }>} A promise that resolves to an object containing the retrieved value or null.
+ */
 export async function serverGet<T extends DataValue>(key: string): Promise<{ value: T | null }> {
   const store = await getOrCreateStoreInstance();
   const value = await store.serverCache.get(key);
@@ -107,11 +151,22 @@ export async function serverGet<T extends DataValue>(key: string): Promise<{ val
   return { value: null };
 }
 
+/**
+ * Removes a value from the server-side cache.
+ *
+ * @param {string} key - The key to remove.
+ * @returns {Promise<void>}
+ */
 export async function serverRemove(key: string): Promise<void> {
   const store = await getOrCreateStoreInstance();
   await store.serverCache.remove(key);
 }
 
+/**
+ * Cleans up the server-side cache by clearing all items and resetting the store instance.
+ *
+ * @returns {Promise<void>}
+ */
 export async function cleanup(): Promise<void> {
   const store = await getOrCreateStoreInstance();
   if (store) {

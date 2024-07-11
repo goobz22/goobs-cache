@@ -1,43 +1,32 @@
 # goobs-cache
 
-A versatile and efficient caching and state management solution for TypeScript and Node.js applications. goobs-cache features multiple storage options including two-level server caching, client-side session storage, and in-memory caching, along with encryption, compression, and flexible data management across different environments.
-
-goobs-cache aims to provide a comprehensive solution for data management, with the potential to replace or complement various existing tools and technologies:
-
-- In-memory data stores
-- Key-value storage services
-- React state management solutions
-- Browser's localStorage and sessionStorage
-- Server-side session management tools
-- Database caching layers
-
-By adopting goobs-cache, you can consolidate your data management strategy with a single, powerful solution that works across your stack.
+A versatile and efficient caching and state management solution for TypeScript and JavaScript applications. goobs-cache features multiple storage options, encryption, compression, and flexible data management across different environments.
 
 ## Features
 
-- Multiple storage options:
+- **Multiple storage options**:
 
-  - Server-side two-level caching
-  - Client-side session storage
+  - Server-side caching with LRU strategy
+  - Client-side storage (cookies and session storage)
   - In-memory caching
 
-- Cross-environment support: Works in both client-side and server-side environments.
+- **Cross-environment support**: Works seamlessly in both client-side and server-side environments.
 
-- Unified state management: Provides functionality similar to React's useContext, useState, and Jotai atoms.
+- **Unified state management**: Provides functionality similar to React's useContext, useState, and Jotai atoms.
 
-- Encryption: Implements AES-GCM encryption for enhanced data security.
+- **Enhanced security**: Implements AES-GCM encryption for data protection.
 
-- Compression: Utilizes gzip compression to optimize storage utilization.
+- **Optimized storage**: Utilizes compression to reduce storage footprint.
 
-- Batch writing: Improves write performance through batched operations.
+- **Performance optimization**:
 
-- Access tracking: Tracks key access patterns for potential optimization.
+  - Batch writing for improved write performance
+  - Access tracking for intelligent prefetching
+  - Auto-tuning capabilities for optimal cache performance
 
-- TypeScript support: Provides type safety and improved developer experience.
+- **TypeScript support**: Offers strong typing for improved developer experience.
 
 ## Installation
-
-Install goobs-cache using npm:
 
 ```bash
 npm install goobs-cache
@@ -49,88 +38,85 @@ Or using yarn:
 yarn add goobs-cache
 ```
 
-## Usage
+## Basic Usage
 
-Here's a basic example of how goobs-cache can be used for different storage types:
+Here's a simple example of how to use goobs-cache:
 
 ```typescript
-import { get, set, remove } from 'goobs-cache';
+import { set, get, remove } from 'goobs-cache';
 
 // Server-side caching
-await set('myKey', 'Hello, World!', new Date(Date.now() + 3600000), 'server'); // Expires in 1 hour
-const serverValue = await get('myKey', 'server');
-console.log(serverValue); // { value: 'Hello, World!' }
+await set('serverKey', 'Hello, Server!', new Date(Date.now() + 3600000), 'server');
+const serverValue = await get('serverKey', 'server');
+console.log(serverValue); // { value: 'Hello, Server!' }
 
-// Client-side caching
-await set('clientKey', { name: 'John', age: 30 }, new Date(Date.now() + 1800000), 'client'); // Expires in 30 minutes
+// Client-side caching (session storage)
+await set('clientKey', { name: 'John', age: 30 }, new Date(Date.now() + 1800000), 'client');
 const clientValue = await get('clientKey', 'client');
 console.log(clientValue); // { value: { name: 'John', age: 30 } }
 
-// In-memory caching
-await set('memoryKey', [1, 2, 3], new Date(Date.now() + 300000), 'memory'); // Expires in 5 minutes
-const memoryValue = await get('memoryKey', 'memory');
-console.log(memoryValue); // { value: [1, 2, 3] }
+// Client-side caching (cookies)
+await set('cookieKey', [1, 2, 3], new Date(Date.now() + 300000), 'cookie');
+const cookieValue = await get('cookieKey', 'cookie');
+console.log(cookieValue); // { value: [1, 2, 3] }
 
-// Unified removal across all storage types
-await remove('myKey', 'server');
+// Removal
+await remove('serverKey', 'server');
 await remove('clientKey', 'client');
-await remove('memoryKey', 'memory');
+await remove('cookieKey', 'cookie');
 ```
+
+## Advanced Features
+
+goobs-cache offers advanced capabilities for complex use cases:
+
+- **Atom-based state management**: Similar to Jotai, allowing for fine-grained reactivity.
+- **Context API**: Prevents prop drilling in React applications.
+- **Batched updates**: Optimizes performance by grouping multiple updates.
+- **Auto-tuning**: Automatically adjusts cache size and eviction policies for optimal performance.
+- **Prefetching**: Intelligently loads related data based on access patterns.
 
 ## Configuration
 
-goobs-cache can be configured using a .reusablestore.json file in your project's root directory. Available settings include:
-
-- Cache size
-- Compression level
-- Encryption algorithm
-- Batch writing settings
-- Prefetching threshold
-
-Example configuration:
+Configure goobs-cache using a `.reusablestore.json` file in your project's root:
 
 ```json
 {
   "cacheSize": 10000,
-  "compressionLevel": -1,
+  "cacheMaxAge": 3600000,
+  "compressionLevel": 6,
   "algorithm": "aes-256-gcm",
+  "keySize": 256,
   "batchSize": 100,
-  "persistenceInterval": 600000,
+  "autoTuneInterval": 300000,
   "prefetchThreshold": 5
 }
 ```
 
-## Advanced Usage
+## TypeScript Support
 
-goobs-cache provides additional features for more complex use cases:
+goobs-cache is written in TypeScript and provides comprehensive type definitions for a great developer experience.
 
-- Atom-based state management
-- Context API for prop drilling prevention
-- Reducers and dispatch for complex state logic
-- Selectors for optimized state reading
-- Batched updates for performance optimization
+## Performance
 
-For detailed documentation and advanced use cases, refer to the project's wiki or TypeScript source code.
+goobs-cache is designed for high performance, with features like:
 
-## Roadmap
+- Two-level caching on the server for fast access
+- Intelligent prefetching based on access patterns
+- Compression to reduce data size
+- Batch writing to minimize I/O operations
 
-We're constantly working to expand capabilities and optimize performance. Future goals include:
+## Security
 
-- Performance benchmarking against Redis, Vercel KV, and other solutions
-- Enhanced prefetching mechanisms for improved performance in complex scenarios
-- Automatic key rotation for increased security
-- Comprehensive testing, monitoring, and logging across different environments
-- Innovative approaches to data backups
-- Further optimization of compression and encryption processes
-- Extended TypeScript type inference for even better developer experience
+Security is a top priority in goobs-cache:
 
-## Contributing
-
-We welcome contributions to make goobs-cache even better! If you have ideas for improvements or new features, please submit a pull request or open an issue for discussion.
+- AES-GCM encryption for data at rest
+- Secure key management
+- Client-side encryption in browsers
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Author
 
@@ -138,12 +124,9 @@ goobs-cache is developed and maintained by Matthew Goluba.
 
 ## Contact
 
-For questions, suggestions, or feedback, reach out through:
+For questions or feedback:
 
-GitHub Issues: https://github.com/goobz22/goobs-cache/issues
-
-Email: mkgoluba@technologiesunlimited.net
-
-We're excited about goobs-cache and its potential to streamline data management in web applications. Your feedback is crucial in helping us improve and expand the capabilities of goobs-cache.
+- GitHub Issues: https://github.com/goobz22/goobs-cache/issues
+- Email: mkgoluba@technologiesunlimited.net
 
 Elevate your data management strategy with goobs-cache!

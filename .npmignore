@@ -3,3 +3,4 @@ tsconfig.json
 .prettierrc
 .gitignore
 yarn.lock
+.eslintrc.json

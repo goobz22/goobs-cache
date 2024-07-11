@@ -1,18 +1,6 @@
 'use server';
 import crypto from 'crypto';
-import { CacheConfig } from '../types';
-
-/**
- * EncryptionResult interface represents the result of an encryption operation.
- * It contains the encrypted data, initialization vector (IV), authentication tag (authTag),
- * and the encryption key used for the operation.
- */
-interface EncryptionResult {
-  encryptedData: string;
-  iv: string;
-  authTag?: string;
-  encryptionKey: string;
-}
+import { CacheConfig, EncryptedValue } from '../types';
 
 /**
  * Generates a random encryption key based on the provided cache configuration.
@@ -34,13 +22,15 @@ async function generateEncryptionKey(config: CacheConfig): Promise<Buffer> {
  *
  * @param value The value to be encrypted.
  * @param config The cache configuration object.
- * @returns A Promise that resolves to an EncryptionResult object containing the encrypted data,
+ * @returns A Promise that resolves to an EncryptedValue object containing the encrypted data,
  *          IV, authentication tag (if applicable), and the encryption key.
  * @throws An error if the encryption fails.
  */
-export async function encrypt(value: string, config: CacheConfig): Promise<EncryptionResult> {
+export async function encrypt(value: string, config: CacheConfig): Promise<EncryptedValue> {
   const key = await generateEncryptionKey(config);
   const iv = crypto.randomBytes(16);
+  const salt = crypto.randomBytes(16);
+
   return new Promise((resolve, reject) => {
     try {
       const cipher = crypto.createCipheriv(config.algorithm, key, iv);
@@ -55,6 +45,7 @@ export async function encrypt(value: string, config: CacheConfig): Promise<Encry
         iv: iv.toString('hex'),
         authTag,
         encryptionKey: key.toString('hex'),
+        salt: salt.toString('hex'),
       });
     } catch (error) {
       reject(new Error(`Encryption failed: ${(error as Error).message}`));
@@ -77,12 +68,10 @@ export async function encrypt(value: string, config: CacheConfig): Promise<Encry
  * @throws An error if the decryption fails or if the authentication tag is missing for GCM mode.
  */
 export async function decrypt(
-  encryptedValue: string,
-  iv: string,
-  authTag: string | undefined,
-  encryptionKey: string,
+  encryptedValue: EncryptedValue,
   config: CacheConfig,
 ): Promise<string> {
+  const { encryptedData, iv, authTag, encryptionKey } = encryptedValue;
   return new Promise((resolve, reject) => {
     try {
       const decipher = crypto.createDecipheriv(
@@ -96,7 +85,7 @@ export async function decrypt(
         }
         (decipher as crypto.DecipherGCM).setAuthTag(Buffer.from(authTag, 'hex'));
       }
-      let decrypted = decipher.update(encryptedValue, 'hex', 'utf8');
+      let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
       decrypted += decipher.final('utf8');
       resolve(decrypted);
     } catch (error) {

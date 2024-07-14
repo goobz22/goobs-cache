@@ -1,6 +1,6 @@
 {
   "name": "goobs-cache",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "A comprehensive data management solution for JavaScript applications, offering versatile caching (including Redis-like functionality), state management (similar to Jotai), and storage options (cookies, session storage, server-side). Features encryption, compression, auto-optimization, and supports various data structures.",
   "main": "src/index.ts",
   "types": "src/index.ts",

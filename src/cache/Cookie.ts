@@ -50,11 +50,18 @@ class CookieCache {
     const cookies = document.cookie.split('; ');
     for (const cookie of cookies) {
       const [key, value] = cookie.split('=');
-      try {
-        const parsedValue = JSON.parse(decodeURIComponent(value));
-        this.cache[key] = parsedValue as CacheItem<EncryptedValue>;
-      } catch (error) {
-        console.error('Failed to parse cookie', key, error);
+      if (key && value) {
+        try {
+          const decodedValue = decodeURIComponent(value);
+          if (decodedValue) {
+            const parsedValue = JSON.parse(decodedValue);
+            if (parsedValue && typeof parsedValue === 'object') {
+              this.cache[key] = parsedValue as CacheItem<EncryptedValue>;
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to parse cookie for key ${key}:`, error);
+        }
       }
     }
   }
@@ -65,8 +72,12 @@ class CookieCache {
    */
   private saveToCookies() {
     for (const [key, item] of Object.entries(this.cache)) {
-      const cookieValue = encodeURIComponent(JSON.stringify(item));
-      document.cookie = `${key}=${cookieValue}; expires=${new Date(item.expirationDate).toUTCString()}; path=/`;
+      try {
+        const cookieValue = encodeURIComponent(JSON.stringify(item));
+        document.cookie = `${key}=${cookieValue}; expires=${new Date(item.expirationDate).toUTCString()}; path=/`;
+      } catch (error) {
+        console.error(`Failed to save cookie for key ${key}:`, error);
+      }
     }
   }
 

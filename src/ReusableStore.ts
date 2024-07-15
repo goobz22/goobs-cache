@@ -2,8 +2,20 @@
  * @file ReusableStore.ts
  * @description Provides the main interface for the ReusableStore, handling both server-side and client-side caching operations.
  */
-
-import { DataValue } from './types';
+import {
+  DataValue,
+  StringValue,
+  ListValue,
+  SetValue,
+  HashValue,
+  StreamValue,
+  ZSetValue,
+  HLLValue,
+  GeoValue,
+  JSONValue,
+  CacheMode,
+} from './types';
+import { getExpirationDate } from './utils/ExpirationDate';
 
 /** Determines if the code is running on the server or client side. */
 const isServer = typeof window === 'undefined';
@@ -12,86 +24,103 @@ const isServer = typeof window === 'undefined';
  * Sets a value in the cache.
  *
  * @template T
- * @param {string} key - The key to set.
+ * @param {string} identifier - The identifier for the cache item.
+ * @param {string} storeName - The store name for the cache item.
  * @param {T} value - The value to set.
- * @param {Date} expirationDate - The expiration date for the cached item.
- * @param {'server' | 'client' | 'cookie'} mode - The caching mode to use.
- * @returns {void | Promise<void>} Void if synchronous, Promise<void> if asynchronous.
+ * @param {CacheMode} mode - The caching mode to use, which also determines the expiration style.
+ * @returns {Promise<void>} A promise that resolves when the set operation is complete.
  */
-export function set<T extends DataValue>(
-  key: string,
-  value: T,
-  expirationDate: Date,
-  mode: 'server' | 'client' | 'cookie',
-): void | Promise<void> {
+export function set<
+  T extends
+    | DataValue
+    | StringValue
+    | ListValue
+    | SetValue
+    | HashValue
+    | StreamValue
+    | ZSetValue
+    | HLLValue
+    | GeoValue
+    | JSONValue,
+>(identifier: string, storeName: string, value: T, mode: CacheMode): Promise<void> {
+  const expirationDate = getExpirationDate(mode);
   if (isServer) {
     if (mode === 'server') {
       return import('./ReusableStore.server').then(({ serverSet }) =>
-        serverSet(key, value, expirationDate),
+        serverSet(identifier, storeName, value, expirationDate, mode),
       );
     }
   } else {
-    if (mode === 'client') {
+    if (mode === 'client' || mode === 'cookie') {
       return import('./ReusableStore.client').then(({ clientSet }) =>
-        clientSet(key, value, expirationDate, 'session'),
-      );
-    } else if (mode === 'cookie') {
-      return import('./ReusableStore.client').then(({ clientSet }) =>
-        clientSet(key, value, expirationDate, 'cookie'),
+        clientSet(identifier, value, expirationDate, mode, storeName),
       );
     }
   }
+  return Promise.resolve();
 }
 
 /**
- * Retrieves a value from the cache.
+ * Retrieves a value or values from the cache.
  *
  * @template T
- * @param {string} key - The key to retrieve.
- * @param {'server' | 'client' | 'cookie'} mode - The caching mode to use.
- * @returns {{ value: T | null } | Promise<{ value: T | null }>} The retrieved value or null, either synchronously or as a Promise.
+ * @param {string} identifier - The identifier for the cache item.
+ * @param {string} storeName - The store name for the cache item.
+ * @param {CacheMode} mode - The caching mode to use.
+ * @returns {Promise<T | T[] | null>} A promise that resolves to the retrieved value, array of values, or null.
  */
-export function get<T extends DataValue>(
-  key: string,
-  mode: 'server' | 'client' | 'cookie',
-): { value: T | null } | Promise<{ value: T | null }> {
+export function get<
+  T extends
+    | DataValue
+    | StringValue
+    | ListValue
+    | SetValue
+    | HashValue
+    | StreamValue
+    | ZSetValue
+    | HLLValue
+    | GeoValue
+    | JSONValue,
+>(identifier: string, storeName: string, mode: CacheMode): Promise<T | T[] | null> {
   if (isServer) {
     if (mode === 'server') {
-      return import('./ReusableStore.server').then(({ serverGet }) => serverGet<T>(key));
+      return import('./ReusableStore.server').then(({ serverGet }) =>
+        serverGet<T>(identifier, storeName, mode),
+      );
     }
   } else {
-    if (mode === 'client') {
-      return import('./ReusableStore.client').then(({ clientGet }) => clientGet<T>(key, 'session'));
-    } else if (mode === 'cookie') {
-      return import('./ReusableStore.client').then(({ clientGet }) => clientGet<T>(key, 'cookie'));
+    if (mode === 'client' || mode === 'cookie') {
+      return import('./ReusableStore.client').then(({ clientGet }) =>
+        clientGet<T>(identifier, mode, storeName),
+      );
     }
   }
-  return { value: null };
+  return Promise.resolve(null);
 }
 
 /**
  * Removes a value from the cache.
  *
- * @param {string} key - The key to remove.
- * @param {'server' | 'client' | 'cookie'} mode - The caching mode to use.
- * @returns {void | Promise<void>} Void if synchronous, Promise<void> if asynchronous.
+ * @param {string} identifier - The identifier for the cache item.
+ * @param {string} storeName - The store name for the cache item.
+ * @param {CacheMode} mode - The caching mode to use.
+ * @returns {Promise<void>} A promise that resolves when the remove operation is complete.
  */
-export function remove(key: string, mode: 'server' | 'client' | 'cookie'): void | Promise<void> {
+export function remove(identifier: string, storeName: string, mode: CacheMode): Promise<void> {
   if (isServer) {
     if (mode === 'server') {
-      return import('./ReusableStore.server').then(({ serverRemove }) => serverRemove(key));
+      return import('./ReusableStore.server').then(({ serverRemove }) =>
+        serverRemove(identifier, storeName, mode),
+      );
     }
   } else {
-    if (mode === 'client') {
+    if (mode === 'client' || mode === 'cookie') {
       return import('./ReusableStore.client').then(({ clientRemove }) =>
-        clientRemove(key, 'session'),
-      );
-    } else if (mode === 'cookie') {
-      return import('./ReusableStore.client').then(({ clientRemove }) =>
-        clientRemove(key, 'cookie'),
+        clientRemove(identifier, mode, storeName),
       );
     }
   }
+  return Promise.resolve();
 }
 
 /**

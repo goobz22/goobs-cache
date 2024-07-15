@@ -8,22 +8,11 @@ A versatile and efficient caching and state management solution for TypeScript a
 
   - Server-side caching with LRU strategy
   - Client-side storage (cookies and session storage)
-  - In-memory caching
 
 - **Cross-environment support**: Works seamlessly in both client-side and server-side environments.
-
 - **Unified state management**: Provides functionality similar to React's useContext, useState, and Jotai atoms.
-
 - **Enhanced security**: Implements AES-GCM encryption for data protection.
-
 - **Optimized storage**: Utilizes compression to reduce storage footprint.
-
-- **Performance optimization**:
-
-  - Batch writing for improved write performance
-  - Access tracking for intelligent prefetching
-  - Auto-tuning capabilities for optimal cache performance
-
 - **TypeScript support**: Offers strong typing for improved developer experience.
 
 ## Installation
@@ -46,24 +35,24 @@ Here's a simple example of how to use goobs-cache:
 import { set, get, remove } from 'goobs-cache';
 
 // Server-side caching
-await set('serverKey', 'Hello, Server!', new Date(Date.now() + 3600000), 'server');
-const serverValue = await get('serverKey', 'server');
-console.log(serverValue); // { value: 'Hello, Server!' }
+await set('serverIdentifier', 'serverStore', 'server', 'Hello, Server!');
+const serverValue = await get('serverIdentifier', 'serverStore', 'server');
+console.log(serverValue); // 'Hello, Server!'
 
 // Client-side caching (session storage)
-await set('clientKey', { name: 'John', age: 30 }, new Date(Date.now() + 1800000), 'client');
-const clientValue = await get('clientKey', 'client');
-console.log(clientValue); // { value: { name: 'John', age: 30 } }
+await set('clientIdentifier', 'clientStore', 'client', { name: 'John', age: 30 });
+const clientValue = await get('clientIdentifier', 'clientStore', 'client');
+console.log(clientValue); // { name: 'John', age: 30 }
 
 // Client-side caching (cookies)
-await set('cookieKey', [1, 2, 3], new Date(Date.now() + 300000), 'cookie');
-const cookieValue = await get('cookieKey', 'cookie');
-console.log(cookieValue); // { value: [1, 2, 3] }
+await set('cookieIdentifier', 'cookieStore', 'cookie', [1, 2, 3]);
+const cookieValue = await get('cookieIdentifier', 'cookieStore', 'cookie');
+console.log(cookieValue); // [1, 2, 3]
 
 // Removal
-await remove('serverKey', 'server');
-await remove('clientKey', 'client');
-await remove('cookieKey', 'cookie');
+await remove('serverIdentifier', 'serverStore', 'server');
+await remove('clientIdentifier', 'clientStore', 'client');
+await remove('cookieIdentifier', 'cookieStore', 'cookie');
 ```
 
 ## Advanced Features
@@ -72,9 +61,6 @@ goobs-cache offers advanced capabilities for complex use cases:
 
 - **Atom-based state management**: Similar to Jotai, allowing for fine-grained reactivity.
 - **Context API**: Prevents prop drilling in React applications.
-- **Batched updates**: Optimizes performance by grouping multiple updates.
-- **Auto-tuning**: Automatically adjusts cache size and eviction policies for optimal performance.
-- **Prefetching**: Intelligently loads related data based on access patterns.
 
 ## Configuration
 
@@ -82,14 +68,17 @@ Configure goobs-cache using a `.reusablestore.json` file in your project's root:
 
 ```json
 {
-  "cacheSize": 10000,
-  "cacheMaxAge": 3600000,
-  "compressionLevel": 6,
   "algorithm": "aes-256-gcm",
-  "keySize": 256,
-  "batchSize": 100,
-  "autoTuneInterval": 300000,
-  "prefetchThreshold": 5
+  "keyCheckIntervalMs": 86400000,
+  "keyRotationIntervalMs": 7776000000,
+  "compressionLevel": -1,
+  "cacheSize": 10000,
+  "cacheMaxAge": 86400000,
+  "persistenceInterval": 600000,
+  "maxMemoryUsage": 1073741824,
+  "evictionPolicy": "lru",
+  "forceReset": false,
+  "encryptionPassword": "your-secure-encryption-password-here"
 }
 ```
 
@@ -101,17 +90,15 @@ goobs-cache is written in TypeScript and provides comprehensive type definitions
 
 goobs-cache is designed for high performance, with features like:
 
-- Two-level caching on the server for fast access
-- Intelligent prefetching based on access patterns
+- LRU caching strategy
 - Compression to reduce data size
-- Batch writing to minimize I/O operations
 
 ## Security
 
 Security is a top priority in goobs-cache:
 
 - AES-GCM encryption for data at rest
-- Secure key management
+- Secure key management with regular key rotation
 - Client-side encryption in browsers
 
 ## License

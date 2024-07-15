@@ -1,12 +1,18 @@
+import React from 'react';
+
 export type Listener = () => void;
 
-export type Selector<T> = (state: T) => any;
+export type Selector<T, R = unknown> = (state: T) => R;
 
-export type AtomGetter<T> = () => T;
+export type AtomGetter<T> = () => Promise<T>;
 
-export type AtomSetter<T> = (value: T | ((prev: T) => T)) => void;
+export type AtomSetter<T> = (value: T | ((prev: T) => Promise<T>)) => Promise<void>;
 
-export type ComplexValue = { [key: string]: any } | any[];
+export type PrimitiveValue = string | number | boolean | null | undefined;
+
+export type ComplexValue =
+  | { [key: string]: ComplexValue | PrimitiveValue }
+  | (ComplexValue | PrimitiveValue)[];
 
 export interface CacheItem<T> {
   value: T;
@@ -18,9 +24,9 @@ export interface CacheItem<T> {
 }
 
 export interface StorageInterface {
-  get(key: string): Promise<CacheItem<EncryptedValue> | undefined>;
-  set(key: string, item: CacheItem<EncryptedValue>): Promise<void>;
-  remove(key: string): Promise<void>;
+  get(identifier: string, storeName: string): Promise<CacheItem<EncryptedValue>[] | undefined>;
+  set(identifier: string, storeName: string, items: CacheItem<EncryptedValue>[]): Promise<void>;
+  remove(identifier: string, storeName: string): Promise<void>;
   clear(): Promise<void>;
   getStatistics(): Promise<CacheStatistics>;
   setEvictionPolicy(policy: EvictionPolicy): Promise<void>;
@@ -79,12 +85,15 @@ export interface GeoValue {
   value: Record<string, [number, number]>;
 }
 
-export interface JSONValue {
+export type JSONPrimitive = string | number | boolean | null;
+export type JSONValue = {
   type: 'json';
-  value: any;
+  value: JSONObject | JSONArray;
+};
+export interface JSONObject {
+  [key: string]: JSONPrimitive | JSONObject | JSONArray;
 }
-
-export type PrimitiveValue = string | number | boolean | null | undefined;
+export interface JSONArray extends Array<JSONPrimitive | JSONObject | JSONArray> {}
 
 export type DataValue =
   | PrimitiveValue
@@ -143,42 +152,53 @@ export interface AutoTuneConfig {
 }
 
 export interface Atom<T> {
-  key: string;
-  get: () => T;
-  set: (value: T | ((prev: T) => T)) => void;
+  identifier: string;
+  storeName: string;
+  get: () => Promise<T>;
+  set: (value: T | ((prev: T) => Promise<T>)) => Promise<void>;
   subscribe: (listener: Listener) => () => void;
 }
 
-export interface DerivedAtom<T> extends Atom<T> {
-  deps: Atom<any>[];
+export interface DerivedAtom<T, D extends readonly Atom<DataValue>[]> extends Atom<T> {
+  deps: D;
 }
 
 export interface AtomOptions<T> {
   default: T;
-  validate?: (value: T) => T;
-  onSet?: (newValue: T, oldValue: T) => void;
+  validate?: (value: T) => Promise<T>;
+  onSet?: (newValue: T, oldValue: T) => Promise<void>;
 }
 
 export interface BatchWriterImplementation {
-  add(key: string, value: EncryptedValue, expirationDate: Date): Promise<void>;
+  add(
+    identifier: string,
+    storeName: string,
+    value: EncryptedValue,
+    expirationDate: Date,
+  ): Promise<void>;
   flush(): Promise<void>;
   stop(): Promise<void>;
 }
 
 export interface AccessTrackerImplementation {
-  recordAccess(key: string, relatedKey?: string): Promise<void>;
-  getFrequentKeys(threshold: number): Promise<string[]>;
-  getPredictedNextKeys(key: string): Promise<string[]>;
+  recordAccess(identifier: string, storeName: string, relatedKey?: string): Promise<void>;
+  getFrequentKeys(threshold: number): Promise<Array<{ identifier: string; storeName: string }>>;
+  getPredictedNextKeys(
+    identifier: string,
+    storeName: string,
+  ): Promise<Array<{ identifier: string; storeName: string }>>;
 }
 
 export interface Context<T> {
-  key: string;
+  identifier: string;
+  storeName: string;
   Provider: ContextProvider<T>;
   Consumer: (props: { children: (value: T) => React.ReactNode }) => React.ReactNode;
 }
 
 export interface AsyncContext<T> {
-  key: string;
+  identifier: string;
+  storeName: string;
   Provider: AsyncContextProvider<T>;
   Consumer: (props: { children: (value: T) => React.ReactNode }) => React.ReactNode | null;
 }
@@ -193,6 +213,30 @@ export type AsyncContextProvider<T> = (props: {
   children: React.ReactNode;
 }) => Promise<React.ReactNode>;
 
-export type UseStateHook<T> = [T, (value: T | ((prev: T) => T)) => void];
+export type UseStateHook<T> = [
+  T | undefined,
+  (value: T | ((prev: T) => Promise<T>)) => Promise<void>,
+];
 
 export type UseAsyncContextHook<T> = () => Promise<T>;
+
+export type CacheMode = 'server' | 'client' | 'cookie';
+
+export interface SetOptions {
+  identifier: string;
+  storeName: string;
+  expirationDate?: Date;
+  mode: CacheMode;
+}
+
+export interface GetOptions {
+  identifier: string;
+  storeName: string;
+  mode: CacheMode;
+}
+
+export interface RemoveOptions {
+  identifier: string;
+  storeName: string;
+  mode: CacheMode;
+}

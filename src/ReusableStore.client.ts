@@ -5,7 +5,7 @@
 
 'use client';
 
-import { DataValue, EncryptedValue, CacheConfig } from './types';
+import { DataValue, CacheConfig, CacheMode } from './types';
 import CookieCache from './cache/Cookie';
 import SessionStorageCache from './cache/SessionStorage';
 import config from './../.reusablestore.json';
@@ -17,52 +17,29 @@ const cookieCache = new CookieCache(config as CacheConfig);
 const sessionStorageCache = new SessionStorageCache(config as CacheConfig);
 
 /**
- * Determines the type of a given value.
- *
- * @param {DataValue} value - The value to check.
- * @returns {string} The type of the value as a string.
- */
-function getValueType(value: DataValue): string {
-  if (Array.isArray(value)) {
-    return 'array';
-  } else if (typeof value === 'object' && value !== null) {
-    if ('type' in value && typeof value.type === 'string') {
-      return value.type;
-    }
-    return 'object';
-  }
-  return typeof value;
-}
-
-/**
  * Sets a value in the client-side cache (either cookie or session storage).
  *
  * @template T
- * @param {string} key - The key to set.
+ * @param {string} identifier - The identifier for the cache item.
  * @param {T} value - The value to set.
  * @param {Date} expirationDate - The expiration date for the cached item.
- * @param {'cookie' | 'session'} cacheType - The type of cache to use (cookie or session storage).
+ * @param {CacheMode} mode - The caching mode to use (client or cookie).
+ * @param {string} storeName - The store name for the cache item.
  * @returns {Promise<void>}
  */
 export async function clientSet<T extends DataValue>(
-  key: string,
+  identifier: string,
   value: T,
   expirationDate: Date,
-  cacheType: 'cookie' | 'session',
+  mode: CacheMode,
+  storeName: string,
 ): Promise<void> {
-  const stringifiedValue = JSON.stringify(value);
-  const encryptedValue: EncryptedValue = {
-    encryptedData: stringifiedValue,
-    iv: '',
-    salt: '',
-    encryptionKey: '',
-    type: getValueType(value),
-  };
-
-  if (cacheType === 'cookie') {
-    cookieCache.setToCookie(key, encryptedValue, expirationDate);
+  if (mode === 'cookie') {
+    await cookieCache.setToCookie(identifier, storeName, value, expirationDate);
+  } else if (mode === 'client') {
+    await sessionStorageCache.setToSessionStorage(identifier, storeName, value, expirationDate);
   } else {
-    sessionStorageCache.setToSessionStorage(key, encryptedValue, expirationDate);
+    throw new Error(`Invalid cache mode for client-side caching: ${mode}`);
   }
 }
 
@@ -70,119 +47,145 @@ export async function clientSet<T extends DataValue>(
  * Retrieves a value from the client-side cache (either cookie or session storage).
  *
  * @template T
- * @param {string} key - The key to retrieve.
- * @param {'cookie' | 'session'} cacheType - The type of cache to use (cookie or session storage).
- * @returns {Promise<{ value: T | null }>} A promise that resolves to an object containing the retrieved value or null.
+ * @param {string} identifier - The identifier for the cache item.
+ * @param {CacheMode} mode - The caching mode to use (client or cookie).
+ * @param {string} storeName - The store name for the cache item.
+ * @returns {Promise<T | null>} A promise that resolves to the retrieved value or null.
  */
 export async function clientGet<T extends DataValue>(
-  key: string,
-  cacheType: 'cookie' | 'session',
-): Promise<{ value: T | null }> {
-  let clientCachedItem;
-  if (cacheType === 'cookie') {
-    clientCachedItem = await cookieCache.getFromCookie(key);
+  identifier: string,
+  mode: CacheMode,
+  storeName: string,
+): Promise<T | null> {
+  let clientCachedItems: T[] | undefined;
+  if (mode === 'cookie') {
+    clientCachedItems = await cookieCache.getFromCookie<T>(identifier, storeName);
+  } else if (mode === 'client') {
+    clientCachedItems = await sessionStorageCache.getFromSessionStorage<T>(identifier, storeName);
   } else {
-    clientCachedItem = await sessionStorageCache.getFromSessionStorage(key);
+    throw new Error(`Invalid cache mode for client-side caching: ${mode}`);
   }
 
-  if (
-    clientCachedItem &&
-    typeof clientCachedItem === 'object' &&
-    'encryptedData' in clientCachedItem
-  ) {
-    try {
-      const parsedValue = JSON.parse(clientCachedItem.encryptedData) as T;
-      return { value: parsedValue };
-    } catch (parseError) {
-      console.error('Error parsing cached item:', parseError);
-      return { value: null };
-    }
+  if (clientCachedItems && clientCachedItems.length > 0) {
+    return clientCachedItems[clientCachedItems.length - 1];
   }
-  return { value: null };
+  return null;
 }
 
 /**
  * Removes a value from the client-side cache (either cookie or session storage).
  *
- * @param {string} key - The key to remove.
- * @param {'cookie' | 'session'} cacheType - The type of cache to use (cookie or session storage).
+ * @param {string} identifier - The identifier for the cache item.
+ * @param {CacheMode} mode - The caching mode to use (client or cookie).
+ * @param {string} storeName - The store name for the cache item.
+ * @returns {Promise<void>}
  */
-export function clientRemove(key: string, cacheType: 'cookie' | 'session'): void {
-  if (cacheType === 'cookie') {
-    cookieCache.removeFromCookie(key);
+export async function clientRemove(
+  identifier: string,
+  mode: CacheMode,
+  storeName: string,
+): Promise<void> {
+  if (mode === 'cookie') {
+    cookieCache.removeFromCookie(identifier, storeName);
+  } else if (mode === 'client') {
+    sessionStorageCache.removeFromSessionStorage(identifier, storeName);
   } else {
-    sessionStorageCache.removeFromSessionStorage(key);
+    throw new Error(`Invalid cache mode for client-side caching: ${mode}`);
   }
 }
 
 /**
- * Creates a client-side atom for a specific key in the cache.
+ * Creates a client-side atom for a specific identifier and storeName in the cache.
  *
  * @template T
- * @param {string} key - The key for the atom.
+ * @param {string} identifier - The identifier for the atom.
+ * @param {string} storeName - The store name for the atom.
  * @param {T} initialValue - The initial value for the atom.
- * @param {'cookie' | 'session'} cacheType - The type of cache to use (cookie or session storage).
+ * @param {CacheMode} mode - The caching mode to use (client or cookie).
  * @returns {ReturnType<CookieCache['createAtom']> | ReturnType<SessionStorageCache['createAtom']>} The created atom.
  */
 export function createClientAtom<T extends DataValue>(
-  key: string,
+  identifier: string,
+  storeName: string,
   initialValue: T,
-  cacheType: 'cookie' | 'session',
+  mode: CacheMode,
 ) {
-  const cache = cacheType === 'cookie' ? cookieCache : sessionStorageCache;
-  return cache.createAtom(key, initialValue);
+  const cache = mode === 'cookie' ? cookieCache : sessionStorageCache;
+  return cache.createAtom(identifier, storeName, initialValue);
 }
 
 /**
- * Uses a client-side context for a specific key in the cache.
+ * Uses a client-side context for a specific identifier and storeName in the cache.
  *
  * @template T
- * @param {string} key - The key for the context.
- * @param {T} defaultValue - The default value for the context.
- * @param {'cookie' | 'session'} cacheType - The type of cache to use (cookie or session storage).
- * @returns {Promise<T>} A promise that resolves to the context value.
+ * @param {string} identifier - The identifier for the context.
+ * @param {string} storeName - The store name for the context.
+ * @param {CacheMode} mode - The caching mode to use (client or cookie).
+ * @returns {Promise<T | undefined>} A promise that resolves to the context value or undefined.
  */
 export function useClientContext<T extends DataValue>(
-  key: string,
-  defaultValue: T,
-  cacheType: 'cookie' | 'session',
-): Promise<T> {
-  const cache = cacheType === 'cookie' ? cookieCache : sessionStorageCache;
-  return cache.useContext(key) as Promise<T>;
+  identifier: string,
+  storeName: string,
+  mode: CacheMode,
+): () => Promise<T | undefined> {
+  const cache = mode === 'cookie' ? cookieCache : sessionStorageCache;
+  return cache.useContextHook(identifier, storeName);
 }
 
 /**
- * Creates a client-side context for a specific key in the cache.
+ * Creates a client-side context for a specific identifier and storeName in the cache.
  *
  * @template T
- * @param {string} key - The key for the context.
+ * @param {string} identifier - The identifier for the context.
+ * @param {string} storeName - The store name for the context.
  * @param {T} defaultValue - The default value for the context.
- * @param {'cookie' | 'session'} cacheType - The type of cache to use (cookie or session storage).
+ * @param {CacheMode} mode - The caching mode to use (client or cookie).
  * @returns {ReturnType<CookieCache['createContext']> | ReturnType<SessionStorageCache['createContext']>} The created context.
  */
 export function createClientContext<T extends DataValue>(
-  key: string,
+  identifier: string,
+  storeName: string,
   defaultValue: T,
-  cacheType: 'cookie' | 'session',
+  mode: CacheMode,
 ) {
-  const cache = cacheType === 'cookie' ? cookieCache : sessionStorageCache;
-  return cache.createContext(key, defaultValue);
+  const cache = mode === 'cookie' ? cookieCache : sessionStorageCache;
+  return cache.createContext(identifier, storeName, defaultValue);
 }
 
 /**
- * Creates a client-side useState-like hook for a specific key in the cache.
+ * Creates a client-side useState-like hook for a specific identifier and storeName in the cache.
  *
  * @template T
- * @param {string} key - The key for the state.
+ * @param {string} identifier - The identifier for the state.
+ * @param {string} storeName - The store name for the state.
  * @param {T} initialValue - The initial value for the state.
- * @param {'cookie' | 'session'} cacheType - The type of cache to use (cookie or session storage).
+ * @param {CacheMode} mode - The caching mode to use (client or cookie).
  * @returns {ReturnType<CookieCache['useState']> | ReturnType<SessionStorageCache['useState']>} A useState-like hook for the cached value.
  */
 export function useClientState<T extends DataValue>(
-  key: string,
+  identifier: string,
+  storeName: string,
   initialValue: T,
-  cacheType: 'cookie' | 'session',
-) {
-  const cache = cacheType === 'cookie' ? cookieCache : sessionStorageCache;
-  return cache.useState(key, initialValue);
+  mode: CacheMode,
+): () => [T | undefined, (value: T | ((prev: T) => Promise<T>)) => void] {
+  const cache = mode === 'cookie' ? cookieCache : sessionStorageCache;
+  return cache.useStateHook(identifier, storeName, initialValue);
+}
+
+/**
+ * Retrieves all values associated with a specific identifier and store name from the client-side cache (either cookie or session storage).
+ *
+ * @template T
+ * @param {string} identifier - The identifier to search for.
+ * @param {string} storeName - The store name to search for.
+ * @param {CacheMode} mode - The caching mode to use (client or cookie).
+ * @returns {Promise<T[]>} A promise that resolves to an array of values associated with the identifier and store name.
+ */
+export async function clientGetByIdentifierAndStoreName<T extends DataValue>(
+  identifier: string,
+  storeName: string,
+  mode: CacheMode,
+): Promise<T[]> {
+  const cache = mode === 'cookie' ? cookieCache : sessionStorageCache;
+  return cache.getByIdentifierAndStoreName<T>(identifier, storeName);
 }

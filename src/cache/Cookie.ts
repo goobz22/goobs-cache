@@ -10,43 +10,42 @@ import {
   CacheItem,
   Listener,
   Selector,
-  Context,
   AsyncContext,
   UseStateHook,
   CacheConfig,
   Atom,
+  DataValue,
+  ComplexValue,
 } from '../types';
 import { encrypt, decrypt } from '../utils/Encryption.client';
-import { createAtom, useAtom } from '../atom';
-import { createAsyncContext, useAsyncContext } from './context';
+import { createAtom } from '../atom';
+import { createAsyncContext } from '../context';
+
+interface CacheStructure {
+  [identifier: string]: {
+    [storeName: string]: CacheItem<EncryptedValue>[];
+  };
+}
 
 /**
  * CookieCache class provides a client-side caching mechanism using cookies.
  * It supports encryption, atom-based state management, and context API.
  */
 class CookieCache {
-  private cache: Record<string, CacheItem<EncryptedValue>> = {};
+  private cache: CacheStructure = {};
   private listeners: Record<string, Set<Listener>> = {};
-  private atoms: Record<string, Atom<any>> = {};
-  private contexts: Record<string, Context<any> | AsyncContext<any>> = {};
+  private atoms: Record<string, Atom<DataValue>> = {};
+  private contexts: Record<string, AsyncContext<DataValue>> = {};
   private batchedUpdates: Set<string> = new Set();
   private isBatchingUpdates = false;
   private config: CacheConfig;
 
-  /**
-   * Creates an instance of CookieCache.
-   * @param {CacheConfig} config - The configuration for the cache.
-   */
   constructor(config: CacheConfig) {
     this.config = config;
     this.loadFromCookies();
   }
 
-  /**
-   * Loads cached items from cookies into the internal cache.
-   * @private
-   */
-  private loadFromCookies() {
+  private loadFromCookies(): void {
     const cookies = document.cookie.split('; ');
     for (const cookie of cookies) {
       const [key, value] = cookie.split('=');
@@ -55,8 +54,20 @@ class CookieCache {
           const decodedValue = decodeURIComponent(value);
           if (decodedValue) {
             const parsedValue = JSON.parse(decodedValue);
-            if (parsedValue && typeof parsedValue === 'object') {
-              this.cache[key] = parsedValue as CacheItem<EncryptedValue>;
+            if (
+              parsedValue &&
+              typeof parsedValue === 'object' &&
+              'identifier' in parsedValue &&
+              'storeName' in parsedValue
+            ) {
+              const { identifier, storeName, ...item } = parsedValue;
+              if (!this.cache[identifier]) {
+                this.cache[identifier] = {};
+              }
+              if (!this.cache[identifier][storeName]) {
+                this.cache[identifier][storeName] = [];
+              }
+              this.cache[identifier][storeName].push(item as CacheItem<EncryptedValue>);
             }
           }
         } catch (error) {
@@ -66,233 +77,274 @@ class CookieCache {
     }
   }
 
-  /**
-   * Saves the current cache state to cookies.
-   * @private
-   */
-  private saveToCookies() {
-    for (const [key, item] of Object.entries(this.cache)) {
-      try {
-        const cookieValue = encodeURIComponent(JSON.stringify(item));
-        document.cookie = `${key}=${cookieValue}; expires=${new Date(item.expirationDate).toUTCString()}; path=/`;
-      } catch (error) {
-        console.error(`Failed to save cookie for key ${key}:`, error);
+  private saveToCookies(): void {
+    for (const [identifier, storeNames] of Object.entries(this.cache)) {
+      for (const [storeName, items] of Object.entries(storeNames)) {
+        for (const item of items) {
+          try {
+            const cookieValue = encodeURIComponent(
+              JSON.stringify({ identifier, storeName, ...item }),
+            );
+            const cookieKey = `${identifier}_${storeName}_${item.value.encryptedData.slice(0, 10)}`;
+            document.cookie = `${cookieKey}=${cookieValue}; expires=${new Date(
+              item.expirationDate,
+            ).toUTCString()}; path=/`;
+          } catch (error) {
+            console.error(`Failed to save cookie for ${identifier}/${storeName}:`, error);
+          }
+        }
       }
     }
   }
 
-  /**
-   * Encrypts a value.
-   * @private
-   * @param {any} value - The value to encrypt.
-   * @returns {Promise<EncryptedValue>} A promise that resolves to the encrypted value.
-   */
-  private encryptValue(value: any): Promise<EncryptedValue> {
+  private encryptValue(value: DataValue, storeName: string): Promise<EncryptedValue> {
     const stringValue = JSON.stringify(value);
-    return encrypt(stringValue, this.config);
-  }
-
-  /**
-   * Decrypts an encrypted value.
-   * @private
-   * @param {EncryptedValue} encryptedValue - The encrypted value to decrypt.
-   * @returns {Promise<any>} A promise that resolves to the decrypted value.
-   */
-  private decryptValue(encryptedValue: EncryptedValue): Promise<any> {
-    return decrypt(encryptedValue, this.config).then((decrypted) => {
-      return JSON.parse(decrypted);
+    return encrypt(stringValue, this.config).then((encryptedValue) => {
+      return { ...encryptedValue, storeName };
     });
   }
 
-  /**
-   * Notifies listeners of changes to a specific key.
-   * @private
-   * @param {string} key - The key that changed.
-   */
-  private notifyListeners(key: string) {
+  private decryptValue(encryptedValue: EncryptedValue): Promise<DataValue> {
+    return decrypt(encryptedValue, this.config).then((decrypted) => {
+      return JSON.parse(decrypted) as DataValue;
+    });
+  }
+
+  private notifyListeners(identifier: string, storeName: string): void {
+    const key = `${identifier}_${storeName}`;
     if (this.listeners[key]) {
       this.listeners[key].forEach((listener) => listener());
     }
   }
 
-  /**
-   * Starts a batch update.
-   * @private
-   */
-  private batchStart() {
+  private batchStart(): void {
     this.isBatchingUpdates = true;
   }
 
-  /**
-   * Ends a batch update and notifies listeners.
-   * @private
-   */
-  private batchEnd() {
+  private batchEnd(): void {
     this.isBatchingUpdates = false;
-    this.batchedUpdates.forEach((key) => this.notifyListeners(key));
+    this.batchedUpdates.forEach((key) => {
+      const [identifier, storeName] = key.split('_');
+      this.notifyListeners(identifier, storeName);
+    });
     this.batchedUpdates.clear();
   }
 
-  /**
-   * Updates the cache with a new value for a key.
-   * @private
-   * @param {string} key - The key to update.
-   * @param {any} value - The new value.
-   * @param {Date} expirationDate - The expiration date for the cached item.
-   */
-  private updateCache(key: string, value: any, expirationDate: Date) {
-    this.encryptValue(value).then((encryptedValue) => {
-      this.cache[key] = {
+  private updateCache(
+    identifier: string,
+    storeName: string,
+    value: DataValue,
+    expirationDate: Date,
+  ): void {
+    this.encryptValue(value, storeName).then((encryptedValue) => {
+      if (!this.cache[identifier]) {
+        this.cache[identifier] = {};
+      }
+      if (!this.cache[identifier][storeName]) {
+        this.cache[identifier][storeName] = [];
+      }
+      this.cache[identifier][storeName].push({
         value: encryptedValue,
         lastAccessed: Date.now(),
         expirationDate,
         hitCount: 0,
         compressed: false,
         size: encryptedValue.encryptedData.length,
-      };
+      });
       if (this.isBatchingUpdates) {
-        this.batchedUpdates.add(key);
+        this.batchedUpdates.add(`${identifier}_${storeName}`);
       } else {
-        this.notifyListeners(key);
+        this.notifyListeners(identifier, storeName);
       }
       this.saveToCookies();
     });
   }
 
-  /**
-   * Retrieves a value from the cookie cache.
-   * @param {string} key - The key to retrieve.
-   * @returns {Promise<any | undefined>} A promise that resolves to the value or undefined if not found.
-   */
-  getFromCookie(key: string): Promise<any | undefined> {
-    const item = this.cache[key];
-    if (item && new Date(item.expirationDate) > new Date()) {
-      item.hitCount++;
-      item.lastAccessed = Date.now();
-      return this.decryptValue(item.value);
+  getFromCookie<T extends DataValue>(identifier: string, storeName: string): Promise<T[]> {
+    const items = this.cache[identifier]?.[storeName] || [];
+    const now = new Date();
+    const validItems = items.filter((item) => new Date(item.expirationDate) > now);
+
+    return Promise.all(
+      validItems.map((item) => {
+        item.hitCount++;
+        item.lastAccessed = Date.now();
+        return this.decryptValue(item.value) as Promise<T>;
+      }),
+    );
+  }
+
+  async setToCookie<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+    value: T,
+    expirationDate: Date,
+  ): Promise<void> {
+    await this.updateCache(identifier, storeName, value, expirationDate);
+  }
+
+  removeFromCookie(identifier: string, storeName: string): void {
+    if (this.cache[identifier]) {
+      delete this.cache[identifier][storeName];
+      if (Object.keys(this.cache[identifier]).length === 0) {
+        delete this.cache[identifier];
+      }
     }
-    return Promise.resolve(undefined);
+    const cookiePrefix = `${identifier}_${storeName}_`;
+    document.cookie.split(';').forEach((cookie) => {
+      const [key] = cookie.trim().split('=');
+      if (key.startsWith(cookiePrefix)) {
+        document.cookie = `${key}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+      }
+    });
+    this.notifyListeners(identifier, storeName);
   }
 
-  /**
-   * Sets a value in the cookie cache.
-   * @param {string} key - The key to set.
-   * @param {any} value - The value to set.
-   * @param {Date} expirationDate - The expiration date for the cached item.
-   */
-  setToCookie(key: string, value: any, expirationDate: Date): void {
-    this.updateCache(key, value, expirationDate);
-  }
-
-  /**
-   * Removes a value from the cookie cache.
-   * @param {string} key - The key to remove.
-   */
-  removeFromCookie(key: string): void {
-    delete this.cache[key];
-    document.cookie = `${key}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
-    this.notifyListeners(key);
-  }
-
-  /**
-   * Creates an atom for a specific key in the cache.
-   * @template T
-   * @param {string} key - The key for the atom.
-   * @param {T} initialValue - The initial value for the atom.
-   * @returns {Atom<T>} The created atom.
-   */
-  createAtom<T>(key: string, initialValue: T): Atom<T> {
+  createAtom<T extends DataValue>(identifier: string, storeName: string, initialValue: T): Atom<T> {
+    const key = `${identifier}_${storeName}`;
     if (!this.atoms[key]) {
       const atom = createAtom<T>(
-        key,
-        () => {
-          const item = this.cache[key];
-          return item?.value as unknown as T;
+        identifier,
+        storeName,
+        async () => {
+          const values = await this.getFromCookie<T>(identifier, storeName);
+          return values.length > 0 ? values[values.length - 1] : initialValue;
         },
-        (valueOrUpdater: T | ((prev: T) => T)) => {
-          const currentValue = this.atoms[key].get();
+        async (valueOrUpdater: T | ((prev: T) => Promise<T>)) => {
+          const currentValue = await atom.get();
           const newValue =
             typeof valueOrUpdater === 'function'
-              ? (valueOrUpdater as (prev: T) => T)(currentValue)
+              ? await valueOrUpdater(currentValue)
               : valueOrUpdater;
-          this.setToCookie(key, newValue, new Date(8640000000000000));
+          await this.setToCookie(identifier, storeName, newValue, new Date(8640000000000000));
         },
       );
-      this.atoms[key] = atom;
-      this.setToCookie(key, initialValue, new Date(8640000000000000));
+      this.atoms[key] = atom as unknown as Atom<DataValue>;
+      this.setToCookie(identifier, storeName, initialValue, new Date(8640000000000000));
     }
-    return this.atoms[key] as Atom<T>;
+    return this.atoms[key] as unknown as Atom<T>;
   }
 
-  /**
-   * Selects data from the cache using a selector function.
-   * @template T, R
-   * @param {Selector<T>} selector - The selector function to apply to the cache.
-   * @returns {Promise<R>} A promise that resolves to the selected data.
-   */
-  select<T, R>(selector: Selector<T>): Promise<R> {
-    const decryptPromises = Object.entries(this.cache).map(([key, item]) => {
-      return this.decryptValue(item.value).then((decryptedValue) => [key, decryptedValue]);
-    });
+  async select<T extends ComplexValue, R>(selector: Selector<T, R>): Promise<R> {
+    const decryptPromises = Object.entries(this.cache).flatMap(([identifier, storeNames]) =>
+      Object.entries(storeNames).flatMap(([storeName, items]) =>
+        items.map((item) =>
+          this.decryptValue(item.value).then((decryptedValue) => [
+            `${identifier}_${storeName}`,
+            decryptedValue,
+          ]),
+        ),
+      ),
+    );
 
-    return Promise.all(decryptPromises).then((decryptedEntries) => {
-      const decryptedCache = Object.fromEntries(decryptedEntries) as unknown as T;
-      return selector(decryptedCache);
-    });
+    const decryptedEntries = await Promise.all(decryptPromises);
+    const decryptedCache = Object.fromEntries(decryptedEntries) as T;
+    return selector(decryptedCache);
   }
 
-  /**
-   * Performs a batch update on the cache.
-   * @param {() => void} callback - The callback function to execute in the batch.
-   */
-  batch(callback: () => void) {
+  batch(callback: () => void): void {
     this.batchStart();
     callback();
     this.batchEnd();
   }
 
-  /**
-   * Creates an async context for a specific key in the cache.
-   * @template T
-   * @param {string} key - The key for the context.
-   * @param {T} defaultValue - The default value for the context.
-   * @returns {AsyncContext<T>} The created async context.
-   */
-  createContext<T>(key: string, defaultValue: T): AsyncContext<T> {
+  createContext<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+    defaultValue: T,
+  ): AsyncContext<T> {
+    const key = `${identifier}_${storeName}`;
     if (!this.contexts[key]) {
-      this.contexts[key] = createAsyncContext<T>(
-        key,
+      const context = createAsyncContext<T>(
+        identifier,
+        storeName,
         defaultValue,
-        async (k) => {
-          const value = await this.getFromCookie(k);
-          return value !== undefined ? value : defaultValue;
+        async () => {
+          const values = await this.getFromCookie<T>(identifier, storeName);
+          return values.length > 0 ? values[values.length - 1] : defaultValue;
         },
-        (k, v, e) => this.setToCookie(k, v, e),
+        async (identifier: string, value: T, expirationDate: Date, storeName: string) => {
+          await this.setToCookie(identifier, storeName, value, expirationDate);
+        },
       );
+      this.contexts[key] = context as unknown as AsyncContext<DataValue>;
     }
-    return this.contexts[key] as AsyncContext<T>;
+    return this.contexts[key] as unknown as AsyncContext<T>;
   }
 
-  /**
-   * Uses an async context for a specific key in the cache.
-   * @template T
-   * @param {string} key - The key for the context.
-   * @returns {Promise<T>} A promise that resolves to the context value.
-   */
-  useContext<T>(key: string): Promise<T> {
-    return useAsyncContext(key, (k) => this.getFromCookie(k));
+  getByIdentifierAndStoreName<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+  ): Promise<T[]> {
+    return this.getFromCookie<T>(identifier, storeName);
   }
 
-  /**
-   * Creates a useState-like hook for a specific key in the cache.
-   * @template T
-   * @param {string} key - The key for the state.
-   * @param {T} initialValue - The initial value for the state.
-   * @returns {UseStateHook<T>} A useState-like hook for the cached value.
-   */
-  useState<T>(key: string, initialValue: T): UseStateHook<T> {
-    const atom = this.createAtom(key, initialValue);
-    return useAtom(atom);
+  clear(): void {
+    this.cache = {};
+    const cookies = document.cookie.split(';');
+    for (const cookie of cookies) {
+      const [key] = cookie.trim().split('=');
+      document.cookie = `${key}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+    }
+    this.atoms = {};
+    this.contexts = {};
+    this.listeners = {};
+    this.batchedUpdates.clear();
+  }
+
+  subscribe(identifier: string, storeName: string, listener: Listener): () => void {
+    const key = `${identifier}_${storeName}`;
+    if (!this.listeners[key]) {
+      this.listeners[key] = new Set();
+    }
+    this.listeners[key].add(listener);
+    return () => {
+      this.listeners[key]?.delete(listener);
+      if (this.listeners[key]?.size === 0) {
+        delete this.listeners[key];
+      }
+    };
+  }
+
+  // New methods to be used in functional components
+  useContextHook<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+  ): () => Promise<T | undefined> {
+    return () =>
+      this.getFromCookie<T>(identifier, storeName).then((values) => values[values.length - 1]);
+  }
+
+  useStateHook<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+    initialValue: T,
+  ): () => UseStateHook<T> {
+    return () => {
+      const atom = this.createAtom(identifier, storeName, initialValue);
+      const [state, setState] = (() => {
+        let currentState: T | undefined;
+        return [
+          () => currentState,
+          async (value: T | ((prev: T) => Promise<T>)) => {
+            const newValue =
+              typeof value === 'function'
+                ? await (value as (prev: T) => Promise<T>)(currentState as T)
+                : value;
+            currentState = newValue;
+            await atom.set(newValue);
+          },
+        ];
+      })();
+
+      atom.get().then((value) => {
+        if (value !== undefined) {
+          setState(value);
+        }
+      });
+
+      return [state(), setState];
+    };
   }
 }
 

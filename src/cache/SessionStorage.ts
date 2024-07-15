@@ -10,59 +10,49 @@ import {
   CacheItem,
   Listener,
   Selector,
-  Context,
   AsyncContext,
   UseStateHook,
   CacheConfig,
   Atom,
+  DataValue,
+  ComplexValue,
 } from '../types';
 import { encrypt, decrypt } from '../utils/Encryption.client';
 import { createAtom, useAtom } from '../atom';
-import { createAsyncContext, useAsyncContext } from './context';
+import { createAsyncContext } from '../context';
 
-/**
- * SessionStorageCache class provides a client-side caching mechanism using SessionStorage.
- * It supports encryption, atom-based state management, and context API.
- */
+interface CacheStructure {
+  [identifier: string]: {
+    [storeName: string]: CacheItem<EncryptedValue>[];
+  };
+}
+
 class SessionStorageCache {
-  private cache: Record<string, CacheItem<EncryptedValue>> = {};
+  private cache: CacheStructure = {};
   private listeners: Record<string, Set<Listener>> = {};
-  private atoms: Record<string, Atom<any>> = {};
-  private contexts: Record<string, Context<any> | AsyncContext<any>> = {};
+  private atoms: Record<string, Atom<DataValue>> = {};
+  private contexts: Record<string, AsyncContext<DataValue>> = {};
   private batchedUpdates: Set<string> = new Set();
   private isBatchingUpdates = false;
   private config: CacheConfig;
 
-  /**
-   * Creates an instance of SessionStorageCache.
-   * @param {CacheConfig} config - The configuration for the cache.
-   */
   constructor(config: CacheConfig) {
     this.config = config;
     this.loadFromSessionStorage();
   }
 
-  /**
-   * Loads cached items from SessionStorage into the internal cache.
-   * @private
-   */
-  private loadFromSessionStorage() {
+  private loadFromSessionStorage(): void {
     const cacheString = sessionStorage.getItem('reusableStore');
     if (cacheString) {
       try {
-        const parsedCache = JSON.parse(cacheString);
-        this.cache = parsedCache as Record<string, CacheItem<EncryptedValue>>;
+        this.cache = JSON.parse(cacheString) as CacheStructure;
       } catch (error) {
         console.error('Failed to parse session cache', error);
       }
     }
   }
 
-  /**
-   * Saves the current cache state to SessionStorage.
-   * @private
-   */
-  private saveToSessionStorage() {
+  private saveToSessionStorage(): void {
     try {
       const cacheString = JSON.stringify(this.cache);
       sessionStorage.setItem('reusableStore', cacheString);
@@ -71,218 +61,229 @@ class SessionStorageCache {
     }
   }
 
-  /**
-   * Encrypts a value.
-   * @private
-   * @param {any} value - The value to encrypt.
-   * @returns {Promise<EncryptedValue>} A promise that resolves to the encrypted value.
-   */
-  private encryptValue(value: any): Promise<EncryptedValue> {
+  private async encryptValue(value: unknown): Promise<EncryptedValue> {
     const stringValue = JSON.stringify(value);
-    return encrypt(stringValue, this.config);
+    return await encrypt(stringValue, this.config);
   }
 
-  /**
-   * Decrypts an encrypted value.
-   * @private
-   * @param {EncryptedValue} encryptedValue - The encrypted value to decrypt.
-   * @returns {Promise<any>} A promise that resolves to the decrypted value.
-   */
-  private decryptValue(encryptedValue: EncryptedValue): Promise<any> {
-    return decrypt(encryptedValue, this.config).then((decrypted) => {
-      return JSON.parse(decrypted);
-    });
+  private async decryptValue(encryptedValue: EncryptedValue): Promise<unknown> {
+    const decrypted = await decrypt(encryptedValue, this.config);
+    return JSON.parse(decrypted);
   }
 
-  /**
-   * Notifies listeners of changes to a specific key.
-   * @private
-   * @param {string} key - The key that changed.
-   */
-  private notifyListeners(key: string) {
+  private notifyListeners(identifier: string, storeName: string): void {
+    const key = `${identifier}:${storeName}`;
     if (this.listeners[key]) {
       this.listeners[key].forEach((listener) => listener());
     }
   }
 
-  /**
-   * Starts a batch update.
-   * @private
-   */
-  private batchStart() {
+  private batchStart(): void {
     this.isBatchingUpdates = true;
   }
 
-  /**
-   * Ends a batch update and notifies listeners.
-   * @private
-   */
-  private batchEnd() {
+  private batchEnd(): void {
     this.isBatchingUpdates = false;
-    this.batchedUpdates.forEach((key) => this.notifyListeners(key));
+    this.batchedUpdates.forEach((key) => {
+      const [identifier, storeName] = key.split(':');
+      this.notifyListeners(identifier, storeName);
+    });
     this.batchedUpdates.clear();
   }
 
-  /**
-   * Updates the cache with a new value for a key.
-   * @private
-   * @param {string} key - The key to update.
-   * @param {any} value - The new value.
-   * @param {Date} expirationDate - The expiration date for the cached item.
-   */
-  private updateCache(key: string, value: any, expirationDate: Date) {
-    this.encryptValue(value).then((encryptedValue) => {
-      this.cache[key] = {
-        value: encryptedValue,
-        lastAccessed: Date.now(),
-        expirationDate,
-        hitCount: 0,
-        compressed: false,
-        size: encryptedValue.encryptedData.length,
-      };
-      if (this.isBatchingUpdates) {
-        this.batchedUpdates.add(key);
-      } else {
-        this.notifyListeners(key);
-      }
-      this.saveToSessionStorage();
-    });
-  }
-
-  /**
-   * Retrieves a value from the SessionStorage cache.
-   * @param {string} key - The key to retrieve.
-   * @returns {Promise<any | undefined>} A promise that resolves to the value or undefined if not found.
-   */
-  getFromSessionStorage(key: string): Promise<any | undefined> {
-    const item = this.cache[key];
-    if (item && new Date(item.expirationDate) > new Date()) {
-      item.hitCount++;
-      item.lastAccessed = Date.now();
-      return this.decryptValue(item.value);
+  private async updateCache(
+    identifier: string,
+    storeName: string,
+    value: unknown,
+    expirationDate: Date,
+  ): Promise<void> {
+    const encryptedValue = await this.encryptValue(value);
+    if (!this.cache[identifier]) {
+      this.cache[identifier] = {};
     }
-    return Promise.resolve(undefined);
-  }
-
-  /**
-   * Sets a value in the SessionStorage cache.
-   * @param {string} key - The key to set.
-   * @param {any} value - The value to set.
-   * @param {Date} expirationDate - The expiration date for the cached item.
-   */
-  setToSessionStorage(key: string, value: any, expirationDate: Date): void {
-    this.updateCache(key, value, expirationDate);
-  }
-
-  /**
-   * Removes a value from the SessionStorage cache.
-   * @param {string} key - The key to remove.
-   */
-  removeFromSessionStorage(key: string): void {
-    delete this.cache[key];
+    if (!this.cache[identifier][storeName]) {
+      this.cache[identifier][storeName] = [];
+    }
+    this.cache[identifier][storeName].push({
+      value: encryptedValue,
+      lastAccessed: Date.now(),
+      expirationDate,
+      hitCount: 0,
+      compressed: false,
+      size: encryptedValue.encryptedData.length,
+    });
+    if (this.isBatchingUpdates) {
+      this.batchedUpdates.add(`${identifier}:${storeName}`);
+    } else {
+      this.notifyListeners(identifier, storeName);
+    }
     this.saveToSessionStorage();
-    this.notifyListeners(key);
   }
 
-  /**
-   * Creates an atom for a specific key in the cache.
-   * @template T
-   * @param {string} key - The key for the atom.
-   * @param {T} initialValue - The initial value for the atom.
-   * @returns {Atom<T>} The created atom.
-   */
-  createAtom<T>(key: string, initialValue: T): Atom<T> {
+  async getFromSessionStorage<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+  ): Promise<T[]> {
+    const items = this.cache[identifier]?.[storeName] || [];
+    const now = new Date();
+    const validItems = items.filter((item) => new Date(item.expirationDate) > now);
+
+    return Promise.all(
+      validItems.map(async (item) => {
+        item.hitCount++;
+        item.lastAccessed = Date.now();
+        return this.decryptValue(item.value) as Promise<T>;
+      }),
+    );
+  }
+
+  async setToSessionStorage<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+    value: T,
+    expirationDate: Date,
+  ): Promise<void> {
+    await this.updateCache(identifier, storeName, value, expirationDate);
+  }
+
+  removeFromSessionStorage(identifier: string, storeName: string): void {
+    if (this.cache[identifier]) {
+      delete this.cache[identifier][storeName];
+      if (Object.keys(this.cache[identifier]).length === 0) {
+        delete this.cache[identifier];
+      }
+    }
+    this.saveToSessionStorage();
+    this.notifyListeners(identifier, storeName);
+  }
+
+  createAtom<T extends DataValue>(identifier: string, storeName: string, initialValue: T): Atom<T> {
+    const key = `${identifier}:${storeName}`;
     if (!this.atoms[key]) {
       const atom = createAtom<T>(
-        key,
-        () => {
-          const item = this.cache[key];
-          return item?.value as unknown as T;
+        identifier,
+        storeName,
+        async () => {
+          const values = await this.getFromSessionStorage<T>(identifier, storeName);
+          return values.length > 0 ? values[values.length - 1] : initialValue;
         },
-        (valueOrUpdater: T | ((prev: T) => T)) => {
-          const currentValue = this.atoms[key].get();
+        async (valueOrUpdater: T | ((prev: T) => Promise<T>)) => {
+          const currentValue = await atom.get();
           const newValue =
             typeof valueOrUpdater === 'function'
-              ? (valueOrUpdater as (prev: T) => T)(currentValue)
+              ? await valueOrUpdater(currentValue)
               : valueOrUpdater;
-          this.setToSessionStorage(key, newValue, new Date(8640000000000000));
+          await this.setToSessionStorage(
+            identifier,
+            storeName,
+            newValue,
+            new Date(8640000000000000),
+          );
         },
       );
-      this.atoms[key] = atom;
-      this.setToSessionStorage(key, initialValue, new Date(8640000000000000));
+      this.atoms[key] = atom as unknown as Atom<DataValue>;
+      this.setToSessionStorage(identifier, storeName, initialValue, new Date(8640000000000000));
     }
-    return this.atoms[key] as Atom<T>;
+    return this.atoms[key] as unknown as Atom<T>;
   }
 
-  /**
-   * Selects data from the cache using a selector function.
-   * @template T, R
-   * @param {Selector<T>} selector - The selector function to apply to the cache.
-   * @returns {Promise<R>} A promise that resolves to the selected data.
-   */
-  select<T, R>(selector: Selector<T>): Promise<R> {
-    const decryptPromises = Object.entries(this.cache).map(([key, item]) => {
-      return this.decryptValue(item.value).then((decryptedValue) => [key, decryptedValue]);
-    });
+  async select<T extends ComplexValue, R>(selector: Selector<T, R>): Promise<R> {
+    const decryptPromises = Object.entries(this.cache).flatMap(([identifier, storeNames]) =>
+      Object.entries(storeNames).flatMap(([storeName, items]) =>
+        items.map((item) =>
+          this.decryptValue(item.value).then((decryptedValue) => [
+            `${identifier}:${storeName}`,
+            decryptedValue,
+          ]),
+        ),
+      ),
+    );
 
-    return Promise.all(decryptPromises).then((decryptedEntries) => {
-      const decryptedCache = Object.fromEntries(decryptedEntries) as unknown as T;
-      return selector(decryptedCache);
-    });
+    const decryptedEntries = await Promise.all(decryptPromises);
+    const decryptedCache = Object.fromEntries(decryptedEntries) as T;
+    return selector(decryptedCache);
   }
 
-  /**
-   * Performs a batch update on the cache.
-   * @param {() => void} callback - The callback function to execute in the batch.
-   */
-  batch(callback: () => void) {
+  batch(callback: () => void): void {
     this.batchStart();
     callback();
     this.batchEnd();
   }
 
-  /**
-   * Creates an async context for a specific key in the cache.
-   * @template T
-   * @param {string} key - The key for the context.
-   * @param {T} defaultValue - The default value for the context.
-   * @returns {AsyncContext<T>} The created async context.
-   */
-  createContext<T>(key: string, defaultValue: T): AsyncContext<T> {
+  createContext<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+    defaultValue: T,
+  ): AsyncContext<T> {
+    const key = `${identifier}:${storeName}`;
     if (!this.contexts[key]) {
-      this.contexts[key] = createAsyncContext<T>(
-        key,
+      const context = createAsyncContext<T>(
+        identifier,
+        storeName,
         defaultValue,
-        async (k) => {
-          const value = await this.getFromSessionStorage(k);
-          return value !== undefined ? value : defaultValue;
+        async () => {
+          const values = await this.getFromSessionStorage<T>(identifier, storeName);
+          return values.length > 0 ? values[values.length - 1] : defaultValue;
         },
-        (k, v, e) => this.setToSessionStorage(k, v, e),
+        async (identifier: string, value: T, expirationDate: Date, storeName: string) => {
+          await this.setToSessionStorage(identifier, storeName, value, expirationDate);
+        },
       );
+      this.contexts[key] = context as unknown as AsyncContext<DataValue>;
     }
-    return this.contexts[key] as AsyncContext<T>;
+    return this.contexts[key] as unknown as AsyncContext<T>;
   }
 
-  /**
-   * Uses an async context for a specific key in the cache.
-   * @template T
-   * @param {string} key - The key for the context.
-   * @returns {Promise<T>} A promise that resolves to the context value.
-   */
-  useContext<T>(key: string): Promise<T> {
-    return useAsyncContext(key, (k) => this.getFromSessionStorage(k));
+  getByIdentifierAndStoreName<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+  ): Promise<T[]> {
+    return this.getFromSessionStorage<T>(identifier, storeName);
   }
 
-  /**
-   * Creates a useState-like hook for a specific key in the cache.
-   * @template T
-   * @param {string} key - The key for the state.
-   * @param {T} initialValue - The initial value for the state.
-   * @returns {UseStateHook<T>} A useState-like hook for the cached value.
-   */
-  useState<T>(key: string, initialValue: T): UseStateHook<T> {
-    const atom = this.createAtom(key, initialValue);
-    return useAtom(atom);
+  async clear(): Promise<void> {
+    this.cache = {};
+    sessionStorage.removeItem('reusableStore');
+    this.listeners = {};
+    this.atoms = {};
+    this.contexts = {};
+    this.batchedUpdates.clear();
+  }
+
+  subscribe(identifier: string, storeName: string, listener: Listener): () => void {
+    const key = `${identifier}:${storeName}`;
+    if (!this.listeners[key]) {
+      this.listeners[key] = new Set();
+    }
+    this.listeners[key].add(listener);
+    return () => {
+      this.listeners[key]?.delete(listener);
+      if (this.listeners[key]?.size === 0) {
+        delete this.listeners[key];
+      }
+    };
+  }
+
+  // New methods to be used in functional components
+  useContextHook<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+  ): () => Promise<T | undefined> {
+    return () =>
+      this.getFromSessionStorage<T>(identifier, storeName).then(
+        (values) => values[values.length - 1],
+      );
+  }
+
+  useStateHook<T extends DataValue>(
+    identifier: string,
+    storeName: string,
+    initialValue: T,
+  ): () => UseStateHook<T> {
+    return () => {
+      const atom = this.createAtom(identifier, storeName, initialValue);
+      return useAtom(atom);
+    };
   }
 }
 

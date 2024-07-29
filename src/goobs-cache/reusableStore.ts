@@ -1,6 +1,6 @@
 /**
  * @file ReusableStore.ts
- * @description Provides the main interface for the ReusableStore, handling both server-side and client-side caching operations.
+ * @description Provides the main interface for the ReusableStore, handling both server-side and client-side caching operations with automatic two-layer synchronization.
  */
 import { DataValue, CacheMode, CacheResult, CacheConfig } from '../types';
 import { TwoLayerCache } from '../cache/twoLayerServerlessAndSession';
@@ -25,31 +25,19 @@ const twoLayerCache = new TwoLayerCache({
  * @param {Date} [expirationDate] - Optional expiration date for the cached item.
  * @returns {Promise<void>} A promise that resolves when the set operation is complete.
  */
-export function set(
+export async function set(
   identifier: string,
   storeName: string,
   value: DataValue,
   mode: CacheMode,
   expirationDate: Date = new Date(Date.now() + 24 * 60 * 60 * 1000),
 ): Promise<void> {
-  if (mode === 'twoLayer') {
-    return twoLayerCache.set(identifier, storeName, value, expirationDate);
+  if (mode === 'twoLayer' || mode === 'server') {
+    await twoLayerCache.set(identifier, storeName, value, expirationDate);
+  } else if (!isServer && (mode === 'client' || mode === 'cookie')) {
+    const { clientSet } = await import('./reusableStore.client');
+    await clientSet(identifier, storeName, value, expirationDate, mode);
   }
-
-  if (isServer) {
-    if (mode === 'server') {
-      return import('./reusableStore.server').then(({ serverSet }) =>
-        serverSet(identifier, storeName, value, expirationDate, mode),
-      );
-    }
-  } else {
-    if (mode === 'client' || mode === 'cookie') {
-      return import('./reusableStore.client').then(({ clientSet }) =>
-        clientSet(identifier, storeName, value, expirationDate, mode),
-      );
-    }
-  }
-  return Promise.resolve();
 }
 
 /**
@@ -60,26 +48,38 @@ export function set(
  * @param {CacheMode} mode - The caching mode to use.
  * @returns {Promise<CacheResult>} A promise that resolves to the CacheResult containing the value and metadata.
  */
-export function get(identifier: string, storeName: string, mode: CacheMode): Promise<CacheResult> {
+export async function get(
+  identifier: string,
+  storeName: string,
+  mode: CacheMode,
+): Promise<CacheResult> {
   if (mode === 'twoLayer') {
     return twoLayerCache.get(identifier, storeName);
+  } else if (mode === 'server') {
+    if (isServer) {
+      const { serverlessGet } = await import('./reusableStore.server');
+      return serverlessGet(identifier, storeName, mode);
+    } else {
+      // When on client-side, first try to get from session storage
+      const { clientGet } = await import('./reusableStore.client');
+      const clientResult = await clientGet(identifier, storeName, 'client');
+      if (clientResult.value !== undefined) {
+        return clientResult;
+      }
+      // If not in session storage, fetch from serverless and update session storage
+      const serverResult = await twoLayerCache.get(identifier, storeName);
+      if (serverResult.value !== undefined) {
+        await set(identifier, storeName, serverResult.value, 'client', serverResult.expirationDate);
+      }
+      return serverResult;
+    }
+  } else if (!isServer && (mode === 'client' || mode === 'cookie')) {
+    const { clientGet } = await import('./reusableStore.client');
+    return clientGet(identifier, storeName, mode);
   }
 
-  if (isServer) {
-    if (mode === 'server') {
-      return import('./reusableStore.server').then(({ serverGet }) =>
-        serverGet(identifier, storeName, mode),
-      );
-    }
-  } else {
-    if (mode === 'client' || mode === 'cookie') {
-      return import('./reusableStore.client').then(({ clientGet }) =>
-        clientGet(identifier, storeName, mode),
-      );
-    }
-  }
   // Default case: return an empty result
-  return Promise.resolve({
+  return {
     identifier,
     storeName,
     value: undefined,
@@ -88,7 +88,7 @@ export function get(identifier: string, storeName: string, mode: CacheMode): Pro
     lastAccessedDate: new Date(0),
     getHitCount: 0,
     setHitCount: 0,
-  });
+  };
 }
 
 /**
@@ -99,63 +99,19 @@ export function get(identifier: string, storeName: string, mode: CacheMode): Pro
  * @param {CacheMode} mode - The caching mode to use.
  * @returns {Promise<void>} A promise that resolves when the remove operation is complete.
  */
-export function remove(identifier: string, storeName: string, mode: CacheMode): Promise<void> {
-  if (mode === 'twoLayer') {
-    return twoLayerCache.remove(identifier, storeName);
-  }
-
-  if (isServer) {
-    if (mode === 'server') {
-      return import('./reusableStore.server').then(({ serverRemove }) =>
-        serverRemove(identifier, storeName, mode),
-      );
-    }
-  } else {
-    if (mode === 'client' || mode === 'cookie') {
-      return import('./reusableStore.client').then(({ clientRemove }) =>
-        clientRemove(identifier, storeName, mode),
-      );
-    }
-  }
-  return Promise.resolve();
-}
-
-/**
- * Subscribes to real-time updates for a specific cache item.
- *
- * @template T The type of the data being subscribed to.
- * @param {string} identifier - The identifier for the cache item.
- * @param {string} storeName - The store name for the cache item.
- * @param {(data: T | undefined) => void} listener - The callback function to be called when updates occur.
- * @param {CacheMode} mode - The caching mode to use.
- * @returns {Promise<() => void>} A promise that resolves to a function to unsubscribe from updates.
- */
-export function subscribeToUpdates<T extends DataValue>(
+export async function remove(
   identifier: string,
   storeName: string,
-  listener: (data: T | undefined) => void,
   mode: CacheMode,
-): Promise<() => void> {
-  if (mode === 'twoLayer') {
-    return Promise.resolve(
-      twoLayerCache.subscribeToUpdates(identifier, storeName, (data: DataValue | undefined) =>
-        listener(data as T | undefined),
-      ),
-    );
-  }
-
-  if (isServer) {
-    if (mode === 'server') {
-      return import('./reusableStore.server').then(({ subscribeToUpdates: serverSubscribe }) =>
-        serverSubscribe<T>(identifier, storeName, (data: T | undefined) => listener(data)),
-      );
+): Promise<void> {
+  if (mode === 'twoLayer' || mode === 'server') {
+    await twoLayerCache.remove(identifier, storeName);
+    if (!isServer && mode === 'twoLayer') {
+      const { clientRemove } = await import('./reusableStore.client');
+      await clientRemove(identifier, storeName, 'client');
     }
-  } else {
-    if (mode === 'client') {
-      return import('./reusableStore.client').then(({ subscribeToUpdates: clientSubscribe }) =>
-        clientSubscribe<T>(identifier, storeName, (data: T | undefined) => listener(data)),
-      );
-    }
+  } else if (!isServer && (mode === 'client' || mode === 'cookie')) {
+    const { clientRemove } = await import('./reusableStore.client');
+    await clientRemove(identifier, storeName, mode);
   }
-  return Promise.resolve(() => {});
 }

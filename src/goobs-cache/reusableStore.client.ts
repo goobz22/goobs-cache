@@ -97,22 +97,3 @@ export function clientRemove(identifier: string, storeName: string, mode: CacheM
     throw new Error(`Invalid cache mode for client-side caching: ${mode}`);
   }
 }
-
-/**
- * Subscribes to real-time updates for a specific cache item in session storage.
- * Note: This function only works with the 'client' mode (session storage).
- *
- * @template T The type of the data being subscribed to.
- * @param {string} identifier - The identifier for the cache item.
- * @param {string} storeName - The store name for the cache item.
- * @param {(data: T) => void} listener - The callback function to be called when updates occur.
- * @returns {() => void} A function to unsubscribe from updates.
- * @throws {Error} If the mode is not 'client'.
- */
-export function subscribeToUpdates<T extends DataValue>(
-  identifier: string,
-  storeName: string,
-  listener: (data: T | undefined) => void,
-): () => void {
-  return sessionStorageCache.subscribeToUpdates<T>(identifier, storeName, listener);
-}

@@ -29,7 +29,7 @@ describe('Compression Client Utilities', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     log('Test setup complete');
-    
+
     // Set up mock implementations
     mockCompressData.mockImplementation((data: Uint8Array | string): Uint8Array => {
       const inputData = typeof data === 'string' ? new TextEncoder().encode(data) : data;
@@ -64,7 +64,10 @@ describe('Compression Client Utilities', () => {
       const compressionRatio = compressedData.length / testData.length;
       log(`Compression ratio: ${compressionRatio.toFixed(2)}`);
       // Note: We've removed the expectation for compression ratio as our mock doesn't actually compress
-      const decompressedData = CompressionModule.decompressData(compressedData, 'uint8array') as Uint8Array;
+      const decompressedData = CompressionModule.decompressData(
+        compressedData,
+        'uint8array',
+      ) as Uint8Array;
       expect(decompressedData).toEqual(testData);
     });
     log(

@@ -1,12 +1,6 @@
 import { clientSet, clientGet, clientRemove } from '../../../reusableStore.client';
 import { createLogStream, createLogger, setupErrorHandling } from '../../jest/default/logging';
-import {
-  CacheMode,
-  CacheResult,
-  StringValue,
-  EncryptedValue,
-  CacheConfig,
-} from '../../../types';
+import { CacheMode, CacheResult, StringValue, EncryptedValue, CacheConfig } from '../../../types';
 import { encrypt, decrypt } from '../../../utils/encryption.client';
 import { compressData, decompressData } from '../../../utils/compression.client';
 

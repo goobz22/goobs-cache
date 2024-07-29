@@ -70,7 +70,10 @@ describe('Compression Client Utilities', () => {
       log(`Compressed data length: ${compressedData.length}`);
       const compressionRatio = compressedData.length / testData.length;
       log(`Compression ratio: ${compressionRatio.toFixed(4)}`);
-      const decompressedData = CompressionModule.decompressData(compressedData, 'uint8array') as Uint8Array;
+      const decompressedData = CompressionModule.decompressData(
+        compressedData,
+        'uint8array',
+      ) as Uint8Array;
       expect(decompressedData).toEqual(testData);
     });
     log(

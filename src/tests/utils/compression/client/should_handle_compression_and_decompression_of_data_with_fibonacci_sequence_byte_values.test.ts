@@ -67,7 +67,10 @@ describe('Compression Client Utilities', () => {
       const compressionRatio = compressedData.length / testData.length;
       log(`Compression ratio: ${compressionRatio.toFixed(4)}`);
       // Note: We've removed the expectation for compression ratio as our mock doesn't actually compress
-      const decompressedData = CompressionModule.decompressData(compressedData, 'uint8array') as Uint8Array;
+      const decompressedData = CompressionModule.decompressData(
+        compressedData,
+        'uint8array',
+      ) as Uint8Array;
       expect(decompressedData).toEqual(testData);
     });
     log(

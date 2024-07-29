@@ -10,7 +10,11 @@ import {
 } from 'goobs-testing';
 
 // Mock setup
-import { mockCompressData, mockDecompressData, MockCompressionModule } from '../../../../jest/mocks/utils/client/compression.mock';
+import {
+  mockCompressData,
+  mockDecompressData,
+  MockCompressionModule,
+} from '../../../../jest/mocks/utils/client/compression.mock';
 
 jest.mock('../../../../../utils/compression.client', () => ({
   CompressionModule: MockCompressionModule,
@@ -46,7 +50,9 @@ describe('Compression Client Uint8Array Operations', () => {
 
     mockDecompressData.mockImplementation(
       (data: Uint8Array, outputFormat?: 'string' | 'uint8array'): string | Uint8Array => {
-        debugLog(`Mock decompress data called with input length: ${data.length}, output format: ${outputFormat}`);
+        debugLog(
+          `Mock decompress data called with input length: ${data.length}, output format: ${outputFormat}`,
+        );
         const decompressed = data.slice(0, -3); // Remove the dummy bytes
         return outputFormat === 'string' ? new TextDecoder().decode(decompressed) : decompressed;
       },
@@ -63,7 +69,7 @@ describe('Compression Client Uint8Array Operations', () => {
       testResults,
       'Compression Client Uint8Array Operations',
       'src/testing/tests/utils/compression/client/should_compress_and_decompress_uint8array_data_correctly.test.ts',
-      totalDuration
+      totalDuration,
     );
     closeLogStreams();
     debugLog('Test suite teardown complete');
@@ -82,7 +88,10 @@ describe('Compression Client Uint8Array Operations', () => {
         debugLog(`Compressed data length: ${compressedData.length}`);
 
         debugLog('Decompressing data');
-        const decompressedData = CompressionModule.decompressData(compressedData, 'uint8array') as Uint8Array;
+        const decompressedData = CompressionModule.decompressData(
+          compressedData,
+          'uint8array',
+        ) as Uint8Array;
         expect(decompressedData).toBeInstanceOf(Uint8Array);
         debugLog(`Decompressed data length: ${decompressedData.length}`);
 
@@ -96,7 +105,7 @@ describe('Compression Client Uint8Array Operations', () => {
       testResults.push({
         name: 'should compress and decompress Uint8Array data correctly',
         status: 'passed',
-        duration: Date.now() - startTime
+        duration: Date.now() - startTime,
       });
       debugLog('Compress and decompress Uint8Array test passed');
     } catch (error) {
@@ -105,7 +114,7 @@ describe('Compression Client Uint8Array Operations', () => {
         name: 'should compress and decompress Uint8Array data correctly',
         status: 'failed',
         duration: Date.now() - startTime,
-        error: error as Error
+        error: error as Error,
       });
     }
   });
@@ -122,7 +131,7 @@ describe('Compression Client Uint8Array Operations', () => {
         name: 'should handle empty Uint8Array',
         status: 'failed',
         duration: Date.now() - startTime,
-        error: error as Error
+        error: error as Error,
       });
       throw error; // Re-throw the error to make Jest aware of the failure
     }
@@ -141,7 +150,10 @@ describe('Compression Client Uint8Array Operations', () => {
         debugLog(`Compressed large data length: ${compressedLarge.length}`);
 
         debugLog('Decompressing large data');
-        const decompressedLarge = CompressionModule.decompressData(compressedLarge, 'uint8array') as Uint8Array;
+        const decompressedLarge = CompressionModule.decompressData(
+          compressedLarge,
+          'uint8array',
+        ) as Uint8Array;
         expect(decompressedLarge).toBeInstanceOf(Uint8Array);
         debugLog(`Decompressed large data length: ${decompressedLarge.length}`);
 
@@ -152,7 +164,7 @@ describe('Compression Client Uint8Array Operations', () => {
       testResults.push({
         name: 'should compress and decompress large Uint8Array',
         status: 'passed',
-        duration: Date.now() - startTime
+        duration: Date.now() - startTime,
       });
       debugLog('Compress and decompress large Uint8Array test passed');
     } catch (error) {
@@ -161,7 +173,7 @@ describe('Compression Client Uint8Array Operations', () => {
         name: 'should compress and decompress large Uint8Array',
         status: 'failed',
         duration: Date.now() - startTime,
-        error: error as Error
+        error: error as Error,
       });
     }
   });
@@ -188,7 +200,7 @@ describe('Compression Client Uint8Array Operations', () => {
       testResults.push({
         name: 'should handle errors during compression',
         status: 'passed',
-        duration: Date.now() - startTime
+        duration: Date.now() - startTime,
       });
       debugLog('Error handling during compression test passed');
     } catch (error) {
@@ -197,7 +209,7 @@ describe('Compression Client Uint8Array Operations', () => {
         name: 'should handle errors during compression',
         status: 'failed',
         duration: Date.now() - startTime,
-        error: error as Error
+        error: error as Error,
       });
     }
   });
@@ -211,7 +223,7 @@ describe('Compression Client Uint8Array Operations', () => {
     });
 
     const compressedData = new Uint8Array([1, 2, 3, 4, 5]);
-    
+
     try {
       await expect(async () => {
         await measureAsyncExecutionTime(async () => {
@@ -224,7 +236,7 @@ describe('Compression Client Uint8Array Operations', () => {
       testResults.push({
         name: 'should handle errors during decompression',
         status: 'passed',
-        duration: Date.now() - startTime
+        duration: Date.now() - startTime,
       });
       debugLog('Error handling during decompression test passed');
     } catch (error) {
@@ -233,7 +245,7 @@ describe('Compression Client Uint8Array Operations', () => {
         name: 'should handle errors during decompression',
         status: 'failed',
         duration: Date.now() - startTime,
-        error: error as Error
+        error: error as Error,
       });
     }
   });

@@ -5,12 +5,11 @@ A versatile and efficient caching and state management solution for TypeScript a
 ## Features
 
 - **Multiple storage options**:
-
-  - Server-side caching with LRU strategy
+  - Serverless caching with LRU strategy
   - Client-side storage (cookies and session storage)
-
+- **Two-layer caching**: Automatically syncs between serverless and client-side storage for optimal performance and offline capabilities.
 - **Cross-environment support**: Works seamlessly in both client-side and server-side environments.
-- **Unified state management**: Provides functionality similar to React's useContext, useState, and Jotai atoms.
+- **Unified state management**: Provides functionality similar to React's useContext and useState.
 - **Enhanced security**: Implements AES-GCM encryption for data protection.
 - **Optimized storage**: Utilizes compression to reduce storage footprint.
 - **TypeScript support**: Offers strong typing for improved developer experience.
@@ -34,33 +33,40 @@ Here's a simple example of how to use goobs-cache:
 ```typescript
 import { set, get, remove } from 'goobs-cache';
 
-// Server-side caching
-await set('serverIdentifier', 'serverStore', 'server', 'Hello, Server!');
-const serverValue = await get('serverIdentifier', 'serverStore', 'server');
-console.log(serverValue); // 'Hello, Server!'
+// Two-layer caching (automatically syncs between serverless and client-side)
+await set('userProfile', 'userStore', 'twoLayer', { name: 'Alice', age: 28 });
+const userProfile = await get('userProfile', 'userStore', 'twoLayer');
+console.log(userProfile); // { name: 'Alice', age: 28 }
+
+// Serverless caching
+await set('serverData', 'dataStore', 'server', 'Hello, Serverless!');
+const serverValue = await get('serverData', 'dataStore', 'server');
+console.log(serverValue); // 'Hello, Serverless!'
 
 // Client-side caching (session storage)
-await set('clientIdentifier', 'clientStore', 'client', { name: 'John', age: 30 });
-const clientValue = await get('clientIdentifier', 'clientStore', 'client');
-console.log(clientValue); // { name: 'John', age: 30 }
+await set('clientData', 'clientStore', 'client', { items: [1, 2, 3] });
+const clientValue = await get('clientData', 'clientStore', 'client');
+console.log(clientValue); // { items: [1, 2, 3] }
 
 // Client-side caching (cookies)
-await set('cookieIdentifier', 'cookieStore', 'cookie', [1, 2, 3]);
-const cookieValue = await get('cookieIdentifier', 'cookieStore', 'cookie');
-console.log(cookieValue); // [1, 2, 3]
+await set('cookieData', 'cookieStore', 'cookie', 'Hello, Cookies!');
+const cookieValue = await get('cookieData', 'cookieStore', 'cookie');
+console.log(cookieValue); // 'Hello, Cookies!'
 
 // Removal
-await remove('serverIdentifier', 'serverStore', 'server');
-await remove('clientIdentifier', 'clientStore', 'client');
-await remove('cookieIdentifier', 'cookieStore', 'cookie');
+await remove('userProfile', 'userStore', 'twoLayer');
+await remove('serverData', 'dataStore', 'server');
+await remove('clientData', 'clientStore', 'client');
+await remove('cookieData', 'cookieStore', 'cookie');
 ```
 
 ## Advanced Features
 
 goobs-cache offers advanced capabilities for complex use cases:
 
-- **Atom-based state management**: Similar to Jotai, allowing for fine-grained reactivity.
-- **Context API**: Prevents prop drilling in React applications.
+- **Two-layer caching**: Automatically synchronizes data between serverless and client-side storage, providing seamless offline capabilities and improved performance.
+- **Automatic client-side caching**: When using the 'server' mode on the client-side, data is automatically cached in session storage for faster subsequent access.
+- **Flexible storage options**: Choose between 'twoLayer', 'server', 'client', and 'cookie' modes to best suit your application's needs.
 
 ## Configuration
 
@@ -90,6 +96,7 @@ goobs-cache is written in TypeScript and provides comprehensive type definitions
 
 goobs-cache is designed for high performance, with features like:
 
+- Two-layer caching for optimal data access
 - LRU caching strategy
 - Compression to reduce data size
 

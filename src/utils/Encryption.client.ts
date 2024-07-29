@@ -1,135 +1,256 @@
 'use client';
+
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  CipherKey,
+  BinaryLike,
+  CipherGCM,
+  DecipherGCM,
+  Decipher,
+  pbkdf2,
+} from 'crypto';
 import { CacheConfig, EncryptedValue } from '../types';
 
-/**
- * Converts a string to an ArrayBuffer.
- *
- * @param {string} str - The string to convert.
- * @returns {ArrayBuffer} The converted ArrayBuffer.
- */
-export function str2ab(str: string): ArrayBuffer {
-  return new TextEncoder().encode(str);
+const isBrowser = typeof window !== 'undefined' && window.crypto;
+
+function getRandomValues(array: Uint8Array): Uint8Array {
+  if (isBrowser) {
+    return window.crypto.getRandomValues(array);
+  } else {
+    return Uint8Array.from(randomBytes(array.length));
+  }
 }
 
-/**
- * Converts an ArrayBuffer to a string.
- *
- * @param {ArrayBuffer} buf - The ArrayBuffer to convert.
- * @returns {string} The converted string.
- */
-export function ab2str(buf: ArrayBuffer): string {
-  return new TextDecoder().decode(buf);
+interface CryptoImplementation {
+  deriveKey(password: string, salt: Uint8Array, callback: (key: CipherKey) => void): void;
+  encrypt(
+    key: CipherKey,
+    iv: Uint8Array,
+    data: Uint8Array,
+    callback: (result: { encrypted: Uint8Array; authTag: Uint8Array }) => void,
+  ): void;
+  decrypt(
+    key: CipherKey,
+    iv: Uint8Array,
+    data: Uint8Array,
+    authTag: Uint8Array,
+    callback: (result: Uint8Array | null) => void,
+  ): void;
+  exportKey(key: CipherKey, callback: (result: Uint8Array) => void): void;
 }
 
-/**
- * Converts an ArrayBuffer to a hexadecimal string.
- *
- * @param {ArrayBuffer} buffer - The ArrayBuffer to convert.
- * @returns {string} The converted hexadecimal string.
- */
-function ab2hex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-/**
- * Converts a hexadecimal string to an ArrayBuffer.
- *
- * @param {string} hex - The hexadecimal string to convert.
- * @returns {ArrayBuffer} The converted ArrayBuffer.
- */
-function hex2ab(hex: string): ArrayBuffer {
-  return new Uint8Array(hex.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16))).buffer;
-}
-
-/**
- * Derives a cryptographic key from a password and salt using PBKDF2.
- *
- * @param {string} password - The password used for key derivation.
- * @param {Uint8Array} salt - The salt used for key derivation.
- * @returns {Promise<CryptoKey>} A promise that resolves to the derived cryptographic key.
- */
-function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const enc = new TextEncoder();
-  const keyMaterial = window.crypto.subtle.importKey(
-    'raw',
-    enc.encode(password),
-    { name: 'PBKDF2' },
-    false,
-    ['deriveBits', 'deriveKey'],
-  );
-  return keyMaterial.then((km) =>
-    window.crypto.subtle.deriveKey(
-      {
-        name: 'PBKDF2',
-        salt: salt,
-        iterations: 100000,
-        hash: 'SHA-256',
-      },
-      km,
-      { name: 'AES-GCM', length: 256 },
-      true,
-      ['encrypt', 'decrypt'],
-    ),
-  );
-}
-
-/**
- * Encrypts a value using AES-GCM encryption.
- *
- * @param {string} value - The value to encrypt.
- * @param {CacheConfig} config - The cache configuration containing the encryption password.
- * @returns {Promise<EncryptedValue>} A promise that resolves to the encrypted value.
- */
-export function encrypt(value: string, config: CacheConfig): Promise<EncryptedValue> {
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const salt = window.crypto.getRandomValues(new Uint8Array(16));
-  const keyPromise = deriveKey(config.encryptionPassword, salt);
-  return keyPromise.then((key) =>
+class BrowserCrypto implements CryptoImplementation {
+  deriveKey(password: string, salt: Uint8Array, callback: (key: CipherKey) => void): void {
+    const enc = new TextEncoder();
     window.crypto.subtle
-      .encrypt(
-        {
-          name: 'AES-GCM',
-          iv: iv,
-        },
-        key,
-        str2ab(value),
+      .importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, [
+        'deriveBits',
+        'deriveKey',
+      ])
+      .then((keyMaterial) =>
+        window.crypto.subtle.deriveKey(
+          {
+            name: 'PBKDF2',
+            salt: salt,
+            iterations: 100000,
+            hash: 'SHA-256',
+          },
+          keyMaterial,
+          { name: 'AES-GCM', length: 256 },
+          true,
+          ['encrypt', 'decrypt'],
+        ),
       )
-      .then((encrypted) =>
-        window.crypto.subtle.exportKey('raw', key).then((exportedKey) => ({
-          type: 'encrypted',
-          encryptedData: ab2hex(encrypted),
-          iv: ab2hex(iv),
-          salt: ab2hex(salt),
-          encryptionKey: ab2hex(exportedKey),
-        })),
-      ),
-  );
+      .then((key) => callback(key as unknown as CipherKey));
+  }
+
+  encrypt(
+    key: CipherKey,
+    iv: Uint8Array,
+    data: Uint8Array,
+    callback: (result: { encrypted: Uint8Array; authTag: Uint8Array }) => void,
+  ): void {
+    window.crypto.subtle
+      .encrypt({ name: 'AES-GCM', iv: iv }, key as unknown as CryptoKey, data)
+      .then((encrypted) => {
+        const encryptedContent = new Uint8Array(encrypted, 0, encrypted.byteLength - 16);
+        const authTag = new Uint8Array(encrypted, encrypted.byteLength - 16);
+        callback({
+          encrypted: encryptedContent,
+          authTag: authTag,
+        });
+      });
+  }
+
+  decrypt(
+    key: CipherKey,
+    iv: Uint8Array,
+    data: Uint8Array,
+    authTag: Uint8Array,
+    callback: (result: Uint8Array | null) => void,
+  ): void {
+    const combinedData = new Uint8Array(data.length + authTag.length);
+    combinedData.set(data, 0);
+    combinedData.set(authTag, data.length);
+
+    window.crypto.subtle
+      .decrypt({ name: 'AES-GCM', iv: iv }, key as unknown as CryptoKey, combinedData)
+      .then((decrypted) => callback(new Uint8Array(decrypted)))
+      .catch((error) => {
+        console.error('Decryption error (browser):', error);
+        callback(null);
+      });
+  }
+
+  exportKey(key: CipherKey, callback: (result: Uint8Array) => void): void {
+    window.crypto.subtle
+      .exportKey('raw', key as unknown as CryptoKey)
+      .then((exported) => callback(new Uint8Array(exported)));
+  }
 }
 
-/**
- * Decrypts an encrypted value using AES-GCM decryption.
- *
- * @param {EncryptedValue} encryptedValue - The encrypted value to decrypt.
- * @param {CacheConfig} config - The cache configuration containing the encryption password.
- * @returns {Promise<string>} A promise that resolves to the decrypted string value.
- */
-export function decrypt(encryptedValue: EncryptedValue, config: CacheConfig): Promise<string> {
-  const keyPromise = deriveKey(
-    config.encryptionPassword,
-    new Uint8Array(hex2ab(encryptedValue.salt)),
-  );
-  return keyPromise
-    .then((key) =>
-      window.crypto.subtle.decrypt(
-        {
-          name: 'AES-GCM',
-          iv: hex2ab(encryptedValue.iv),
-        },
-        key,
-        hex2ab(encryptedValue.encryptedData),
-      ),
-    )
-    .then(ab2str);
+class NodeCrypto implements CryptoImplementation {
+  deriveKey(password: string, salt: Uint8Array, callback: (key: CipherKey) => void): void {
+    pbkdf2(password, salt, 100000, 32, 'sha256', (err: Error | null, derivedKey: Buffer) => {
+      if (err) {
+        console.error('Key derivation error:', err);
+        throw err;
+      }
+      callback(derivedKey as unknown as CipherKey);
+    });
+  }
+
+  encrypt(
+    key: CipherKey,
+    iv: Uint8Array,
+    data: Uint8Array,
+    callback: (result: { encrypted: Uint8Array; authTag: Uint8Array }) => void,
+  ): void {
+    const cipher: CipherGCM = createCipheriv('aes-256-gcm', key, iv as BinaryLike) as CipherGCM;
+    const encryptedChunks: Uint8Array[] = [];
+    encryptedChunks.push(new Uint8Array(cipher.update(data)));
+    encryptedChunks.push(new Uint8Array(cipher.final()));
+
+    const encrypted = new Uint8Array(encryptedChunks.reduce((acc, chunk) => acc + chunk.length, 0));
+    let offset = 0;
+    for (const chunk of encryptedChunks) {
+      encrypted.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    const authTag = new Uint8Array(cipher.getAuthTag());
+    callback({ encrypted, authTag });
+  }
+
+  decrypt(
+    key: CipherKey,
+    iv: Uint8Array,
+    data: Uint8Array,
+    authTag: Uint8Array,
+    callback: (result: Uint8Array | null) => void,
+  ): void {
+    const decipher: Decipher = createDecipheriv('aes-256-gcm', key, iv);
+    (decipher as DecipherGCM).setAuthTag(authTag);
+
+    const decryptedChunks: Uint8Array[] = [];
+
+    try {
+      decryptedChunks.push(new Uint8Array(decipher.update(data)));
+      decryptedChunks.push(new Uint8Array(decipher.final()));
+    } catch (error) {
+      callback(null);
+      return;
+    }
+
+    const decrypted = new Uint8Array(decryptedChunks.reduce((acc, chunk) => acc + chunk.length, 0));
+    let offset = 0;
+    for (const chunk of decryptedChunks) {
+      decrypted.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    callback(decrypted);
+  }
+
+  exportKey(key: CipherKey, callback: (result: Uint8Array) => void): void {
+    if (Buffer.isBuffer(key)) {
+      callback(new Uint8Array(key));
+    } else if (typeof key === 'string') {
+      callback(new TextEncoder().encode(key));
+    } else if (key instanceof Uint8Array) {
+      callback(key);
+    } else {
+      callback(new Uint8Array(Buffer.from(key as ArrayBuffer)));
+    }
+  }
+}
+
+const cryptoImpl: CryptoImplementation = isBrowser ? new BrowserCrypto() : new NodeCrypto();
+
+export function encrypt(
+  value: Uint8Array,
+  config: CacheConfig,
+  callback: (result: EncryptedValue) => void,
+): void {
+  const iv = getRandomValues(new Uint8Array(12));
+  const salt = getRandomValues(new Uint8Array(16));
+
+  // Handle empty string case
+  if (value.length === 0) {
+    callback({
+      type: 'encrypted',
+      encryptedData: new Uint8Array(0),
+      iv: iv,
+      salt: salt,
+      authTag: new Uint8Array(16),
+      encryptionKey: new Uint8Array(32),
+    });
+    return;
+  }
+
+  cryptoImpl.deriveKey(config.encryptionPassword, salt, (key) => {
+    cryptoImpl.encrypt(key, iv, value, ({ encrypted, authTag }) => {
+      cryptoImpl.exportKey(key, (exportedKey) => {
+        callback({
+          type: 'encrypted',
+          encryptedData: encrypted,
+          iv: iv,
+          salt: salt,
+          authTag: authTag,
+          encryptionKey: exportedKey,
+        });
+      });
+    });
+  });
+}
+
+export function decrypt(
+  encryptedValue: EncryptedValue,
+  config: CacheConfig,
+  callback: (result: Uint8Array | null) => void,
+): void {
+  const { iv, salt, encryptedData, authTag } = encryptedValue;
+
+  // Handle empty string case
+  if (encryptedData.length === 0) {
+    callback(new Uint8Array(0));
+    return;
+  }
+
+  cryptoImpl.deriveKey(config.encryptionPassword, salt, (key) => {
+    cryptoImpl.decrypt(key, iv, encryptedData, authTag, (decrypted) => {
+      if (decrypted === null) {
+        console.error('Decryption error:');
+        console.error('Decryption parameters:');
+        console.error('Key:', key);
+        console.error('IV:', iv);
+        console.error('Data:', encryptedData);
+        console.error('Auth Tag:', authTag);
+        console.error('Decryption failed. Encrypted value:', encryptedValue);
+      }
+      callback(decrypted);
+    });
+  });
 }

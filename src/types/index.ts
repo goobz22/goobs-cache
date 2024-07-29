@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type Listener = () => void;
+export type Listener<T> = (data: T) => void;
 
 export type Selector<T, R = unknown> = (state: T) => R;
 
@@ -14,33 +14,23 @@ export type ComplexValue =
   | { [key: string]: ComplexValue | PrimitiveValue }
   | (ComplexValue | PrimitiveValue)[];
 
-export interface CacheItem<T> {
-  value: T;
-  lastAccessed: number;
+export interface CacheResult {
+  identifier: string;
+  storeName: string;
+  value: DataValue;
   expirationDate: Date;
-  hitCount: number;
-  compressed: boolean;
-  size: number;
+  lastUpdatedDate: Date;
+  lastAccessedDate: Date;
+  getHitCount: number;
+  setHitCount: number;
 }
 
 export interface StorageInterface {
-  get(identifier: string, storeName: string): Promise<CacheItem<EncryptedValue>[] | undefined>;
-  set(identifier: string, storeName: string, items: CacheItem<EncryptedValue>[]): Promise<void>;
+  get(identifier: string, storeName: string): Promise<CacheResult[] | undefined>;
+  set(identifier: string, storeName: string, items: CacheResult[]): Promise<void>;
   remove(identifier: string, storeName: string): Promise<void>;
   clear(): Promise<void>;
-  getStatistics(): Promise<CacheStatistics>;
   setEvictionPolicy(policy: EvictionPolicy): Promise<void>;
-  autoTune(): Promise<void>;
-}
-
-export interface CacheStatistics {
-  hitRate: number;
-  missRate: number;
-  evictionCount: number;
-  totalItems: number;
-  memoryUsage: number;
-  averageAccessTime: number;
-  memorySize: number;
 }
 
 export type EvictionPolicy = 'lru' | 'lfu' | 'adaptive';
@@ -48,6 +38,16 @@ export type EvictionPolicy = 'lru' | 'lfu' | 'adaptive';
 export interface StringValue {
   type: 'string';
   value: string;
+}
+
+export interface NumberValue {
+  type: 'number';
+  value: number;
+}
+
+export interface BooleanValue {
+  type: 'boolean';
+  value: boolean;
 }
 
 export interface ListValue {
@@ -99,6 +99,8 @@ export type DataValue =
   | PrimitiveValue
   | ComplexValue
   | StringValue
+  | NumberValue
+  | BooleanValue
   | ListValue
   | SetValue
   | HashValue
@@ -106,15 +108,16 @@ export type DataValue =
   | ZSetValue
   | HLLValue
   | GeoValue
+  | EncryptedValue
   | JSONValue;
 
 export interface EncryptedValue {
-  type?: string;
-  encryptedData: string;
-  iv: string;
-  salt: string;
-  authTag?: string;
-  encryptionKey: string;
+  type: 'encrypted';
+  encryptedData: Uint8Array;
+  iv: Uint8Array;
+  salt: Uint8Array;
+  authTag: Uint8Array;
+  encryptionKey: Uint8Array;
 }
 
 export interface CompressionOptions {
@@ -144,19 +147,11 @@ export interface CacheConfig {
   encryptionPassword: string;
 }
 
-export interface AutoTuneConfig {
-  minSize: number;
-  maxSize: number;
-  tuneInterval: number;
-  performanceThreshold: number;
-}
-
 export interface Atom<T> {
   identifier: string;
   storeName: string;
   get: () => Promise<T>;
   set: (value: T | ((prev: T) => Promise<T>)) => Promise<void>;
-  subscribe: (listener: Listener) => () => void;
 }
 
 export interface DerivedAtom<T, D extends readonly Atom<DataValue>[]> extends Atom<T> {
@@ -220,23 +215,4 @@ export type UseStateHook<T> = [
 
 export type UseAsyncContextHook<T> = () => Promise<T>;
 
-export type CacheMode = 'server' | 'client' | 'cookie';
-
-export interface SetOptions {
-  identifier: string;
-  storeName: string;
-  expirationDate?: Date;
-  mode: CacheMode;
-}
-
-export interface GetOptions {
-  identifier: string;
-  storeName: string;
-  mode: CacheMode;
-}
-
-export interface RemoveOptions {
-  identifier: string;
-  storeName: string;
-  mode: CacheMode;
-}
+export type CacheMode = 'server' | 'client' | 'cookie' | 'twoLayer';

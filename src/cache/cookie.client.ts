@@ -10,7 +10,6 @@ import {
   getLastAccessedDate,
 } from '../utils/lastDate.client';
 import { compressData, decompressData } from '../utils/compression.client';
-import { realTimeSync } from '../utils/realTimeServerToClient';
 
 interface CacheStructure {
   [identifier: string]: {
@@ -162,11 +161,6 @@ class CookieCache {
           identifier,
           storeName,
         );
-        this.decryptValue(encryptedValue, (decryptedValue) => {
-          if (decryptedValue) {
-            realTimeSync.handleCacheUpdate({ ...newCacheResult, value: decryptedValue });
-          }
-        });
       }
     });
   }
@@ -259,17 +253,6 @@ class CookieCache {
       storeName,
       new Date(0),
     );
-
-    realTimeSync.handleCacheUpdate({
-      identifier,
-      storeName,
-      value: undefined,
-      expirationDate: new Date(0),
-      lastUpdatedDate: new Date(0),
-      lastAccessedDate: new Date(0),
-      getHitCount: 0,
-      setHitCount: 0,
-    });
   }
 
   clear(): void {
@@ -288,25 +271,6 @@ class CookieCache {
         localStorage.removeItem(key);
       }
     }
-
-    realTimeSync.handleCacheUpdate({
-      identifier: 'all',
-      storeName: 'all',
-      value: undefined,
-      expirationDate: new Date(0),
-      lastUpdatedDate: new Date(0),
-      lastAccessedDate: new Date(0),
-      getHitCount: 0,
-      setHitCount: 0,
-    });
-  }
-
-  subscribeToUpdates<T extends DataValue>(
-    identifier: string,
-    storeName: string,
-    listener: (data: T | undefined) => void,
-  ): () => void {
-    return realTimeSync.subscribe<T>(identifier, storeName, listener);
   }
 }
 

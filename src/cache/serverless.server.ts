@@ -1,6 +1,6 @@
 /**
- * @file ServerCache.ts
- * @description Implements a server-side cache with LRU strategy, compression, and encryption capabilities for serverless environments.
+ * @file ServerlessCache.ts
+ * @description Implements a serverless cache with LRU strategy, compression, and encryption capabilities for serverless environments.
  */
 
 'use server';
@@ -16,7 +16,6 @@ import {
   updateLastAccessedDate,
   updateLastDates,
 } from '../utils/lastDate.server';
-import { realTimeSync } from '../utils/realTimeServerToClient';
 
 interface CacheStructure {
   [identifier: string]: {
@@ -24,7 +23,7 @@ interface CacheStructure {
   };
 }
 
-class ServerCache {
+class ServerlessCache {
   private cache: CacheStructure = {};
   private config: CacheConfig;
   private encryptionPassword: string;
@@ -198,9 +197,6 @@ class ServerCache {
       identifier,
       storeName,
     );
-
-    // Notify the Real-Time Server-Client Sync system
-    await realTimeSync.handleCacheUpdate(compressedItem);
   }
 
   async remove(identifier: string, storeName: string): Promise<void> {
@@ -254,33 +250,10 @@ class ServerCache {
       storeName,
       { lastUpdatedDate: new Date(0), lastAccessedDate: new Date(0) },
     );
-
-    // Notify the Real-Time Server-Client Sync system of the removal
-    await realTimeSync.handleCacheUpdate({
-      identifier,
-      storeName,
-      value: undefined,
-      expirationDate: new Date(0),
-      lastUpdatedDate: new Date(0),
-      lastAccessedDate: new Date(0),
-      getHitCount: 0,
-      setHitCount: 0,
-    });
   }
 
   async clear(): Promise<void> {
     this.cache = {};
-    // Notify the Real-Time Server-Client Sync system of the clear operation
-    await realTimeSync.handleCacheUpdate({
-      identifier: 'all',
-      storeName: 'all',
-      value: undefined,
-      expirationDate: new Date(0),
-      lastUpdatedDate: new Date(0),
-      lastAccessedDate: new Date(0),
-      getHitCount: 0,
-      setHitCount: 0,
-    });
   }
 
   async setEvictionPolicy(policy: EvictionPolicy): Promise<void> {
@@ -322,21 +295,13 @@ class ServerCache {
     }
     return values;
   }
-
-  subscribeToUpdates<T extends DataValue>(
-    identifier: string,
-    storeName: string,
-    listener: (data: T) => void,
-  ): () => void {
-    return realTimeSync.subscribe<T>(identifier, storeName, listener);
-  }
 }
 
-export async function createServerCache(
+export async function createServerlessCache(
   config: CacheConfig,
   encryptionPassword: string,
-): Promise<ServerCache> {
-  return new ServerCache(config, encryptionPassword);
+): Promise<ServerlessCache> {
+  return new ServerlessCache(config, encryptionPassword);
 }
 
-export type { ServerCache };
+export type { ServerlessCache };

@@ -1,95 +1,111 @@
 'use server';
-import crypto from 'crypto';
+
+import { promisify } from 'util';
+import {
+  randomBytes,
+  scrypt,
+  createCipheriv,
+  createDecipheriv,
+  CipherGCM,
+  CipherCCM,
+  DecipherGCM,
+  DecipherCCM,
+} from 'crypto';
 import { CacheConfig, EncryptedValue } from '../types';
 
-/**
- * Generates a random encryption key based on the provided cache configuration.
- * The key size is determined by parsing the algorithm specified in the configuration.
- *
- * @param config The cache configuration object.
- * @returns A Promise that resolves to the generated encryption key as a Buffer.
- */
-async function generateEncryptionKey(config: CacheConfig): Promise<Buffer> {
-  const keySize = parseInt(config.algorithm.split('-')[1]) / 8;
-  return crypto.randomBytes(keySize);
+const randomBytesAsync = promisify(randomBytes);
+const scryptAsync = promisify(scrypt);
+
+const SUPPORTED_ALGORITHMS = ['aes-256-gcm', 'aes-256-ccm'];
+
+async function deriveKey(password: string, salt: Uint8Array): Promise<Buffer> {
+  return scryptAsync(password, salt, 32) as Promise<Buffer>;
 }
 
-/**
- * Encrypts the provided value using the specified cache configuration.
- * It generates a random encryption key and initialization vector (IV),
- * creates a cipher using the specified algorithm, and encrypts the value.
- * If the algorithm includes 'gcm', it also generates an authentication tag.
- *
- * @param value The value to be encrypted.
- * @param config The cache configuration object.
- * @returns A Promise that resolves to an EncryptedValue object containing the encrypted data,
- *          IV, authentication tag (if applicable), and the encryption key.
- * @throws An error if the encryption fails.
- */
-export async function encrypt(value: string, config: CacheConfig): Promise<EncryptedValue> {
-  const key = await generateEncryptionKey(config);
-  const iv = crypto.randomBytes(16);
-  const salt = crypto.randomBytes(16);
+export async function encrypt(
+  value: Uint8Array,
+  password: string,
+  config: CacheConfig,
+): Promise<EncryptedValue> {
+  if (!SUPPORTED_ALGORITHMS.includes(config.algorithm)) {
+    throw new Error(
+      `Unsupported algorithm: ${config.algorithm}. Supported algorithms are: ${SUPPORTED_ALGORITHMS.join(', ')}`,
+    );
+  }
 
-  return new Promise((resolve, reject) => {
-    try {
-      const cipher = crypto.createCipheriv(config.algorithm, key, iv);
-      let encrypted = cipher.update(value, 'utf8', 'hex');
-      encrypted += cipher.final('hex');
-      let authTag: string | undefined;
-      if (config.algorithm.toLowerCase().includes('gcm')) {
-        authTag = (cipher as crypto.CipherGCM).getAuthTag().toString('hex');
-      }
-      resolve({
-        encryptedData: encrypted,
-        iv: iv.toString('hex'),
-        authTag,
-        encryptionKey: key.toString('hex'),
-        salt: salt.toString('hex'),
-      });
-    } catch (error) {
-      reject(new Error(`Encryption failed: ${(error as Error).message}`));
-    }
-  });
+  const iv = new Uint8Array(await randomBytesAsync(16));
+  const salt = new Uint8Array(await randomBytesAsync(16));
+  const key = new Uint8Array(await deriveKey(password, salt));
+
+  let cipher: CipherGCM | CipherCCM;
+  if (config.algorithm === 'aes-256-ccm') {
+    cipher = createCipheriv(config.algorithm, key, iv) as CipherCCM;
+  } else if (config.algorithm === 'aes-256-gcm') {
+    cipher = createCipheriv(config.algorithm, key, iv) as CipherGCM;
+  } else {
+    throw new Error(`Unsupported algorithm: ${config.algorithm}`);
+  }
+
+  const encryptedParts: Uint8Array[] = [];
+  encryptedParts.push(new Uint8Array(cipher.update(value)));
+  encryptedParts.push(new Uint8Array(cipher.final()));
+
+  const encryptedData = new Uint8Array(encryptedParts.reduce((acc, curr) => acc + curr.length, 0));
+  let offset = 0;
+  for (const part of encryptedParts) {
+    encryptedData.set(part, offset);
+    offset += part.length;
+  }
+
+  const authTag = 'getAuthTag' in cipher ? new Uint8Array(cipher.getAuthTag()) : new Uint8Array(0);
+
+  return {
+    type: 'encrypted',
+    encryptedData,
+    iv,
+    salt,
+    authTag,
+    encryptionKey: key,
+  };
 }
 
-/**
- * Decrypts the provided encrypted value using the specified cache configuration,
- * initialization vector (IV), authentication tag (authTag), and encryption key.
- * It creates a decipher using the specified algorithm, sets the authentication tag (if applicable),
- * and decrypts the encrypted value.
- *
- * @param encryptedValue The encrypted value to be decrypted.
- * @param iv The initialization vector used for the encryption.
- * @param authTag The authentication tag used for the encryption (required for GCM mode).
- * @param encryptionKey The encryption key used for the encryption.
- * @param config The cache configuration object.
- * @returns A Promise that resolves to the decrypted value as a string.
- * @throws An error if the decryption fails or if the authentication tag is missing for GCM mode.
- */
 export async function decrypt(
   encryptedValue: EncryptedValue,
+  password: string,
   config: CacheConfig,
-): Promise<string> {
-  const { encryptedData, iv, authTag, encryptionKey } = encryptedValue;
-  return new Promise((resolve, reject) => {
-    try {
-      const decipher = crypto.createDecipheriv(
-        config.algorithm,
-        Buffer.from(encryptionKey, 'hex'),
-        Buffer.from(iv, 'hex'),
-      );
-      if (config.algorithm.toLowerCase().includes('gcm')) {
-        if (!authTag) {
-          throw new Error('Auth tag is required for GCM mode');
-        }
-        (decipher as crypto.DecipherGCM).setAuthTag(Buffer.from(authTag, 'hex'));
-      }
-      let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
-      decrypted += decipher.final('utf8');
-      resolve(decrypted);
-    } catch (error) {
-      reject(new Error(`Decryption failed: ${(error as Error).message}`));
-    }
-  });
+): Promise<Uint8Array> {
+  if (!SUPPORTED_ALGORITHMS.includes(config.algorithm)) {
+    throw new Error(
+      `Unsupported algorithm: ${config.algorithm}. Supported algorithms are: ${SUPPORTED_ALGORITHMS.join(', ')}`,
+    );
+  }
+
+  const { encryptedData, iv, salt, authTag } = encryptedValue;
+
+  // Derive the key using the provided salt
+  const key = new Uint8Array(await deriveKey(password, salt));
+
+  let decipher: DecipherGCM | DecipherCCM;
+  if (config.algorithm === 'aes-256-gcm') {
+    decipher = createDecipheriv(config.algorithm, key, iv) as DecipherGCM;
+    decipher.setAuthTag(authTag);
+  } else if (config.algorithm === 'aes-256-ccm') {
+    decipher = createDecipheriv(config.algorithm, key, iv) as DecipherCCM;
+    (decipher as DecipherCCM).setAuthTag(authTag);
+  } else {
+    throw new Error(`Unsupported algorithm: ${config.algorithm}`);
+  }
+
+  const decryptedParts: Uint8Array[] = [];
+  decryptedParts.push(new Uint8Array(decipher.update(encryptedData)));
+  decryptedParts.push(new Uint8Array(decipher.final()));
+
+  const decryptedData = new Uint8Array(decryptedParts.reduce((acc, curr) => acc + curr.length, 0));
+  let offset = 0;
+  for (const part of decryptedParts) {
+    decryptedData.set(part, offset);
+    offset += part.length;
+  }
+
+  return decryptedData;
 }

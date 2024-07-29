@@ -1,13 +1,12 @@
-import { get, set, remove } from './ReusableStore';
+import { get, set, remove, subscribeToUpdates } from './reusableStore';
 import {
   Listener,
   Selector,
   AtomGetter,
   AtomSetter,
   ComplexValue,
-  CacheItem,
+  CacheResult,
   StorageInterface,
-  CacheStatistics,
   EvictionPolicy,
   StringValue,
   ListValue,
@@ -18,13 +17,13 @@ import {
   HLLValue,
   GeoValue,
   JSONValue,
+  JSONObject,
   PrimitiveValue,
   DataValue,
   EncryptedValue,
   CompressionOptions,
   EncryptionOptions,
   CacheConfig,
-  AutoTuneConfig,
   Atom,
   DerivedAtom,
   AtomOptions,
@@ -36,9 +35,10 @@ import {
   AsyncContextProvider,
   UseStateHook,
   UseAsyncContextHook,
+  CacheMode,
 } from './types';
 
-export { get, set, remove };
+export { get, set, remove, subscribeToUpdates };
 
 export type {
   Listener,
@@ -46,12 +46,11 @@ export type {
   AtomGetter,
   AtomSetter,
   ComplexValue,
-  CacheItem,
   StorageInterface,
-  CacheStatistics,
   EvictionPolicy,
   StringValue,
   ListValue,
+  CacheResult,
   SetValue,
   HashValue,
   StreamValue,
@@ -59,13 +58,13 @@ export type {
   HLLValue,
   GeoValue,
   JSONValue,
+  JSONObject,
   PrimitiveValue,
   DataValue,
   EncryptedValue,
   CompressionOptions,
   EncryptionOptions,
   CacheConfig,
-  AutoTuneConfig,
   Atom,
   DerivedAtom,
   AtomOptions,
@@ -77,4 +76,5 @@ export type {
   AsyncContextProvider,
   UseStateHook,
   UseAsyncContextHook,
+  CacheMode,
 };

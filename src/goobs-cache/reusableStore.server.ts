@@ -2,13 +2,12 @@
  * @file ReusableStore.server.ts
  * @description Implements server-side caching functionality with configuration loading and storage interface.
  */
-
 'use server';
 
 import fs from 'fs/promises';
 import path from 'path';
-import { ServerCache, createServerCache } from './cache/ServerCache';
-import { CacheConfig, DataValue, CacheMode } from './types';
+import { ServerCache, createServerCache } from '../cache/serverless.server';
+import { CacheConfig, DataValue, CacheMode, CacheResult } from '../types';
 
 let serverCache: ServerCache | null = null;
 
@@ -18,7 +17,7 @@ let serverCache: ServerCache | null = null;
  * @returns {Promise<CacheConfig>} A promise that resolves to the cache configuration.
  * @throws {Error} If the configuration file cannot be loaded or parsed.
  */
-async function loadConfig(): Promise<CacheConfig> {
+export async function loadConfig(): Promise<CacheConfig> {
   const configPath = path.resolve(process.cwd(), '.reusablestore.json');
   try {
     const configFile = await fs.readFile(configPath, 'utf-8');
@@ -37,7 +36,8 @@ async function loadConfig(): Promise<CacheConfig> {
 async function initializeServerCache(): Promise<ServerCache> {
   if (!serverCache) {
     const config = await loadConfig();
-    serverCache = await createServerCache(config);
+    const encryptionPassword = process.env.ENCRYPTION_PASSWORD || 'default-password';
+    serverCache = await createServerCache(config, encryptionPassword);
   }
   return serverCache;
 }
@@ -45,18 +45,17 @@ async function initializeServerCache(): Promise<ServerCache> {
 /**
  * Sets a value in the server-side cache.
  *
- * @template T
  * @param {string} identifier - The identifier for the cache item.
  * @param {string} storeName - The store name for the cache item.
- * @param {T} value - The value to set.
+ * @param {DataValue} value - The value to set.
  * @param {Date} expirationDate - The expiration date for the cached item.
  * @param {CacheMode} mode - The caching mode (always 'server' for server-side caching).
  * @returns {Promise<void>}
  */
-export async function serverSet<T extends DataValue>(
+export async function serverSet(
   identifier: string,
   storeName: string,
-  value: T,
+  value: DataValue,
   expirationDate: Date,
   mode: CacheMode,
 ): Promise<void> {
@@ -65,28 +64,41 @@ export async function serverSet<T extends DataValue>(
   }
   const cache = await initializeServerCache();
   await cache.set(identifier, storeName, value, expirationDate);
+  // The ServerCache.set method should handle notifying real-time listeners internally
 }
 
 /**
  * Retrieves a value from the server-side cache.
  *
- * @template T
  * @param {string} identifier - The identifier for the cache item.
  * @param {string} storeName - The store name for the cache item.
  * @param {CacheMode} mode - The caching mode (always 'server' for server-side caching).
- * @returns {Promise<T | null>} A promise that resolves to the retrieved value or null.
+ * @returns {Promise<CacheResult>} A promise that resolves to the CacheResult containing the retrieved value and metadata.
  */
-export async function serverGet<T extends DataValue>(
+export async function serverGet(
   identifier: string,
   storeName: string,
   mode: CacheMode,
-): Promise<T | null> {
+): Promise<CacheResult> {
   if (mode !== 'server') {
     throw new Error(`Invalid cache mode for server-side caching: ${mode}`);
   }
   const cache = await initializeServerCache();
-  const value = await cache.get<T>(identifier, storeName);
-  return value ?? null;
+  const result = await cache.get(identifier, storeName);
+  if (result.value !== undefined) {
+    return result;
+  }
+  // Return a default CacheResult if no value was found
+  return {
+    identifier,
+    storeName,
+    value: undefined,
+    expirationDate: new Date(0),
+    lastUpdatedDate: new Date(0),
+    lastAccessedDate: new Date(0),
+    getHitCount: 0,
+    setHitCount: 0,
+  };
 }
 
 /**
@@ -107,35 +119,23 @@ export async function serverRemove(
   }
   const cache = await initializeServerCache();
   await cache.remove(identifier, storeName);
+  // The ServerCache.remove method should handle notifying real-time listeners internally
 }
 
 /**
- * Retrieves all values associated with a specific identifier and store name from the server-side cache.
+ * Subscribes to real-time updates for a specific cache item.
  *
- * @template T
- * @param {string} identifier - The identifier to search for.
- * @param {string} storeName - The store name to search for.
- * @param {CacheMode} mode - The caching mode (always 'server' for server-side caching).
- * @returns {Promise<T[]>} A promise that resolves to an array of values associated with the identifier and store name.
+ * @template T The type of the data being subscribed to.
+ * @param {string} identifier - The identifier for the cache item.
+ * @param {string} storeName - The store name for the cache item.
+ * @param {(data: T) => void} listener - The callback function to be called when updates occur.
+ * @returns {Promise<() => void>} A promise that resolves to a function to unsubscribe from updates.
  */
-export async function serverGetByIdentifierAndStoreName<T extends DataValue>(
+export async function subscribeToUpdates<T extends DataValue>(
   identifier: string,
   storeName: string,
-  mode: CacheMode,
-): Promise<T[]> {
-  if (mode !== 'server') {
-    throw new Error(`Invalid cache mode for server-side caching: ${mode}`);
-  }
+  listener: (data: T) => void,
+): Promise<() => void> {
   const cache = await initializeServerCache();
-  return await cache.getByIdentifierAndStoreName<T>(identifier, storeName);
-}
-
-/**
- * Cleans up the server-side cache by clearing all items.
- *
- * @returns {Promise<void>}
- */
-export async function cleanup(): Promise<void> {
-  const cache = await initializeServerCache();
-  await cache.clear();
+  return cache.subscribeToUpdates<T>(identifier, storeName, listener);
 }

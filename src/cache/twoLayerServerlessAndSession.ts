@@ -1,23 +1,24 @@
-import { ServerCache, createServerCache } from './serverless.server';
+import { ServerlessCache, createServerlessCache } from './serverless.server';
 import SessionStorageCache from './session.client';
 import { TwoLayerClientCache, ClientStorage, ServerStorage } from '../utils/twoLayerCache.client';
 import { TwoLayerServerCache } from '../utils/twoLayerCache.server';
 import { CacheConfig, CacheResult, DataValue } from '../types';
+import { realTimeSync } from '../utils/realTimeServerToClient';
 
-class ServerCacheAdapter implements ServerStorage {
-  private serverCachePromise: Promise<ServerCache>;
+class ServerlessAdapter implements ServerStorage {
+  private serverlessCachePromise: Promise<ServerlessCache>;
 
   constructor(config: CacheConfig) {
-    this.serverCachePromise = createServerCache(config, config.encryptionPassword);
+    this.serverlessCachePromise = createServerlessCache(config, config.encryptionPassword);
   }
 
-  private async getServerCache(): Promise<ServerCache> {
-    return await this.serverCachePromise;
+  private async getServerlessCache(): Promise<ServerlessCache> {
+    return await this.serverlessCachePromise;
   }
 
   async get(identifier: string, storeName: string): Promise<CacheResult> {
-    const serverCache = await this.getServerCache();
-    return serverCache.get(identifier, storeName);
+    const serverlessCache = await this.getServerlessCache();
+    return serverlessCache.get(identifier, storeName);
   }
 
   async set(
@@ -26,18 +27,48 @@ class ServerCacheAdapter implements ServerStorage {
     value: DataValue,
     expirationDate: Date,
   ): Promise<void> {
-    const serverCache = await this.getServerCache();
-    return serverCache.set(identifier, storeName, value, expirationDate);
+    const serverlessCache = await this.getServerlessCache();
+    await serverlessCache.set(identifier, storeName, value, expirationDate);
+    realTimeSync.handleCacheUpdate({
+      identifier,
+      storeName,
+      value,
+      expirationDate,
+      lastUpdatedDate: new Date(),
+      lastAccessedDate: new Date(),
+      getHitCount: 0,
+      setHitCount: 1,
+    });
   }
 
   async remove(identifier: string, storeName: string): Promise<void> {
-    const serverCache = await this.getServerCache();
-    return serverCache.remove(identifier, storeName);
+    const serverlessCache = await this.getServerlessCache();
+    await serverlessCache.remove(identifier, storeName);
+    realTimeSync.handleCacheUpdate({
+      identifier,
+      storeName,
+      value: undefined,
+      expirationDate: new Date(0),
+      lastUpdatedDate: new Date(),
+      lastAccessedDate: new Date(),
+      getHitCount: 0,
+      setHitCount: 0,
+    });
   }
 
   async clear(): Promise<void> {
-    const serverCache = await this.getServerCache();
-    return serverCache.clear();
+    const serverlessCache = await this.getServerlessCache();
+    await serverlessCache.clear();
+    realTimeSync.handleCacheUpdate({
+      identifier: '*',
+      storeName: '*',
+      value: undefined,
+      expirationDate: new Date(0),
+      lastUpdatedDate: new Date(),
+      lastAccessedDate: new Date(),
+      getHitCount: 0,
+      setHitCount: 0,
+    });
   }
 
   subscribeToUpdates<T extends DataValue>(
@@ -45,17 +76,7 @@ class ServerCacheAdapter implements ServerStorage {
     storeName: string,
     listener: (data: T) => void,
   ): () => void {
-    let unsubscribe: (() => void) | undefined;
-
-    this.getServerCache().then((serverCache) => {
-      unsubscribe = serverCache.subscribeToUpdates(identifier, storeName, listener);
-    });
-
-    return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
-    };
+    return realTimeSync.subscribe<T>(identifier, storeName, listener);
   }
 }
 
@@ -87,18 +108,15 @@ class SessionStorageAdapter implements ClientStorage {
   }
 }
 
-type ListenerMap = Map<string, Set<(data: DataValue) => void>>;
-
 export class TwoLayerCache {
   private clientCache: TwoLayerClientCache | null = null;
   private serverCache: TwoLayerServerCache;
-  private listeners: ListenerMap = new Map();
   private isClient: boolean;
   private config: CacheConfig;
 
   constructor(config: CacheConfig) {
     this.config = config;
-    const serverStorage = new ServerCacheAdapter(config);
+    const serverStorage = new ServerlessAdapter(config);
     this.isClient = typeof window !== 'undefined';
 
     if (this.isClient) {
@@ -108,64 +126,52 @@ export class TwoLayerCache {
 
     this.serverCache = new TwoLayerServerCache(config, serverStorage);
 
-    // Subscribe to server updates
-    this.serverCache.subscribeToUpdates<DataValue>('*', '*', (data: DataValue) => {
-      if (
-        typeof data === 'object' &&
-        data !== null &&
-        'identifier' in data &&
-        'storeName' in data &&
-        'value' in data
-      ) {
-        const { identifier, storeName, value } = data as {
-          identifier: string;
-          storeName: string;
-          value: DataValue;
-        };
-        this.notifyListeners(identifier, storeName, value);
-      }
-    });
-  }
-
-  private getKey(identifier: string, storeName: string): string {
-    return `${identifier}:${storeName}`;
-  }
-
-  private notifyListeners(identifier: string, storeName: string, value: DataValue): void {
-    const key = this.getKey(identifier, storeName);
-    const listeners = this.listeners.get(key);
-    if (listeners) {
-      listeners.forEach((listener) => listener(value));
+    if (this.isClient) {
+      realTimeSync.subscribe('*', '*', (data: DataValue) => {
+        if (this.clientCache && typeof data === 'object' && data !== null) {
+          const cacheResult = data as Partial<CacheResult>;
+          if (
+            typeof cacheResult.identifier === 'string' &&
+            typeof cacheResult.storeName === 'string' &&
+            cacheResult.value !== undefined &&
+            cacheResult.expirationDate instanceof Date
+          ) {
+            this.clientCache.set(
+              cacheResult.identifier,
+              cacheResult.storeName,
+              cacheResult.value,
+              cacheResult.expirationDate,
+            );
+          }
+        }
+      });
     }
   }
 
   async get(identifier: string, storeName: string): Promise<CacheResult> {
-    return new Promise((resolve) => {
-      if (this.isClient && this.clientCache) {
-        this.clientCache.get(identifier, storeName, (clientResult) => {
+    if (this.isClient && this.clientCache) {
+      return new Promise((resolve) => {
+        this.clientCache!.get(identifier, storeName, (clientResult) => {
           if (clientResult && clientResult.value !== undefined) {
             resolve(clientResult);
           } else {
             this.serverCache.get(identifier, storeName).then((serverResult) => {
-              if (serverResult.value !== undefined && this.isClient && this.clientCache) {
-                this.clientCache.set(
+              if (serverResult.value !== undefined) {
+                this.clientCache!.set(
                   identifier,
                   storeName,
                   serverResult.value,
                   serverResult.expirationDate,
                 );
-                this.notifyListeners(identifier, storeName, serverResult.value);
               }
               resolve(serverResult);
             });
           }
         });
-      } else {
-        this.serverCache.get(identifier, storeName).then((serverResult) => {
-          resolve(serverResult);
-        });
-      }
-    });
+      });
+    } else {
+      return this.serverCache.get(identifier, storeName);
+    }
   }
 
   async set(
@@ -178,7 +184,6 @@ export class TwoLayerCache {
     if (this.isClient && this.clientCache) {
       this.clientCache.set(identifier, storeName, value, expirationDate);
     }
-    this.notifyListeners(identifier, storeName, value);
   }
 
   async remove(identifier: string, storeName: string): Promise<void> {
@@ -186,7 +191,6 @@ export class TwoLayerCache {
     if (this.isClient && this.clientCache) {
       this.clientCache.remove(identifier, storeName);
     }
-    this.notifyListeners(identifier, storeName, undefined);
   }
 
   async clear(): Promise<void> {
@@ -194,7 +198,6 @@ export class TwoLayerCache {
     if (this.isClient && this.clientCache) {
       this.clientCache.clear();
     }
-    this.notifyListeners('*', '*', undefined);
   }
 
   subscribeToUpdates(
@@ -202,24 +205,7 @@ export class TwoLayerCache {
     storeName: string,
     listener: (data: DataValue) => void,
   ): () => void {
-    const key = this.getKey(identifier, storeName);
-    if (!this.listeners.has(key)) {
-      this.listeners.set(key, new Set());
-    }
-    const listeners = this.listeners.get(key);
-    if (listeners) {
-      listeners.add(listener);
-    }
-
-    return () => {
-      const listeners = this.listeners.get(key);
-      if (listeners) {
-        listeners.delete(listener);
-        if (listeners.size === 0) {
-          this.listeners.delete(key);
-        }
-      }
-    };
+    return realTimeSync.subscribe(identifier, storeName, listener);
   }
 
   isClientSide(): boolean {

@@ -1,229 +1,296 @@
-import { ServerlessCache, createServerlessCache } from './serverless.server';
-import SessionStorageCache from './session.client';
-import { TwoLayerClientCache, ClientStorage, ServerStorage } from '../utils/twoLayerCache.client';
-import { TwoLayerServerCache } from '../utils/twoLayerCache.server';
-import { CacheConfig, CacheResult, DataValue } from '../types';
-import { realTimeSync } from '../utils/realTimeServerToClient';
+import { createLogger, format, transports, Logger } from 'winston';
+import ServerlessCache, { createServerlessCache } from './serverless.server';
+import SessionStorageCache, { createSessionStorageCache } from './session.client';
+import {
+  ServerlessCacheConfig,
+  SessionCacheConfig,
+  CacheResult,
+  DataValue,
+  TwoLayerMode,
+  GlobalConfig,
+} from '../types';
+import path from 'path';
 
-class ServerlessAdapter implements ServerStorage {
-  private serverlessCachePromise: Promise<ServerlessCache>;
+let logger: Logger;
 
-  constructor(config: CacheConfig) {
-    this.serverlessCachePromise = createServerlessCache(config, config.encryptionPassword);
+let serverlessCache: ServerlessCache | null = null;
+let sessionStorage: SessionStorageCache | null = null;
+
+const initializeLogger = (globalConfig: GlobalConfig) => {
+  logger = createLogger({
+    level: globalConfig.logLevel,
+    silent: !globalConfig.loggingEnabled,
+    format: format.combine(
+      format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+      format.errors({ stack: true }),
+      format.splat(),
+      format.json(),
+      format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
+    ),
+    defaultMeta: { service: 'two-layer-cache' },
+    transports: [
+      new transports.Console({
+        format: format.combine(
+          format.colorize(),
+          format.printf(({ level, message, timestamp, metadata }) => {
+            let msg = `${timestamp} [${level}]: ${message}`;
+            if (Object.keys(metadata).length > 0) {
+              msg += '\n\t' + JSON.stringify(metadata);
+            }
+            return msg;
+          }),
+        ),
+      }),
+      new transports.File({
+        filename: path.join(globalConfig.logDirectory, 'two-layer-cache-error.log'),
+        level: 'error',
+      }),
+      new transports.File({
+        filename: path.join(globalConfig.logDirectory, 'two-layer-cache-combined.log'),
+      }),
+    ],
+  });
+};
+
+const initializeCaches = async (
+  serverlessConfig: ServerlessCacheConfig,
+  sessionConfig: SessionCacheConfig,
+  globalConfig: GlobalConfig,
+): Promise<void> => {
+  const startTime = process.hrtime();
+  logger.info('Initializing caches', {
+    serverlessConfig: { ...serverlessConfig, encryptionPassword: '[REDACTED]' },
+    sessionConfig: { ...sessionConfig, encryptionPassword: '[REDACTED]' },
+  });
+  if (!serverlessCache) {
+    logger.debug('Creating serverless cache');
+    serverlessCache = createServerlessCache(
+      serverlessConfig,
+      serverlessConfig.encryption.encryptionPassword,
+      globalConfig,
+    );
+    logger.info('Serverless cache created');
   }
-
-  private async getServerlessCache(): Promise<ServerlessCache> {
-    return await this.serverlessCachePromise;
+  if (!sessionStorage && typeof window !== 'undefined') {
+    logger.debug('Creating session storage cache');
+    sessionStorage = createSessionStorageCache(sessionConfig, globalConfig);
+    logger.info('Session storage cache created');
   }
+  const [seconds, nanoseconds] = process.hrtime(startTime);
+  const duration = seconds * 1000 + nanoseconds / 1e6;
+  logger.debug('Caches initialized', { duration: `${duration.toFixed(2)}ms` });
+};
 
-  async get(identifier: string, storeName: string): Promise<CacheResult> {
-    const serverlessCache = await this.getServerlessCache();
-    return serverlessCache.get(identifier, storeName);
-  }
-
-  async set(
-    identifier: string,
-    storeName: string,
-    value: DataValue,
-    expirationDate: Date,
-  ): Promise<void> {
-    const serverlessCache = await this.getServerlessCache();
-    await serverlessCache.set(identifier, storeName, value, expirationDate);
-    realTimeSync.handleCacheUpdate({
+export async function update(
+  identifier: string,
+  storeName: string,
+  value: DataValue,
+  serverlessConfig: ServerlessCacheConfig,
+  sessionConfig: SessionCacheConfig,
+  mode: TwoLayerMode = 'both',
+  globalConfig: GlobalConfig,
+): Promise<void> {
+  const startTime = process.hrtime();
+  logger.info('Updating cache', { identifier, storeName, mode });
+  await initializeCaches(serverlessConfig, sessionConfig, globalConfig);
+  const expirationDate = new Date(Date.now() + serverlessConfig.cacheMaxAge);
+  try {
+    if (mode === 'serverless' || mode === 'both') {
+      logger.debug('Updating serverless cache', { identifier, storeName });
+      await serverlessCache!.set(identifier, storeName, value, expirationDate);
+      logger.info('Serverless cache updated', { identifier, storeName });
+    }
+    if ((mode === 'session' || mode === 'both') && typeof window !== 'undefined') {
+      logger.debug('Updating session storage', { identifier, storeName });
+      sessionStorage!.set(identifier, storeName, value, expirationDate);
+      logger.info('Session storage updated', { identifier, storeName });
+    }
+    const [seconds, nanoseconds] = process.hrtime(startTime);
+    const duration = seconds * 1000 + nanoseconds / 1e6;
+    logger.debug('Cache update completed', { duration: `${duration.toFixed(2)}ms` });
+  } catch (error) {
+    logger.error('Error updating cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
       identifier,
       storeName,
-      value,
-      expirationDate,
-      lastUpdatedDate: new Date(),
-      lastAccessedDate: new Date(),
-      getHitCount: 0,
-      setHitCount: 1,
+      mode,
     });
-  }
-
-  async remove(identifier: string, storeName: string): Promise<void> {
-    const serverlessCache = await this.getServerlessCache();
-    await serverlessCache.remove(identifier, storeName);
-    realTimeSync.handleCacheUpdate({
-      identifier,
-      storeName,
-      value: undefined,
-      expirationDate: new Date(0),
-      lastUpdatedDate: new Date(),
-      lastAccessedDate: new Date(),
-      getHitCount: 0,
-      setHitCount: 0,
-    });
-  }
-
-  async clear(): Promise<void> {
-    const serverlessCache = await this.getServerlessCache();
-    await serverlessCache.clear();
-    realTimeSync.handleCacheUpdate({
-      identifier: '*',
-      storeName: '*',
-      value: undefined,
-      expirationDate: new Date(0),
-      lastUpdatedDate: new Date(),
-      lastAccessedDate: new Date(),
-      getHitCount: 0,
-      setHitCount: 0,
-    });
-  }
-
-  subscribeToUpdates<T extends DataValue>(
-    identifier: string,
-    storeName: string,
-    listener: (data: T) => void,
-  ): () => void {
-    return realTimeSync.subscribe<T>(identifier, storeName, listener);
+    throw error;
   }
 }
 
-class SessionStorageAdapter implements ClientStorage {
-  private sessionStorage: SessionStorageCache;
-
-  constructor(config: CacheConfig) {
-    this.sessionStorage = new SessionStorageCache(config);
-  }
-
-  get(
-    identifier: string,
-    storeName: string,
-    callback: (result: CacheResult | undefined) => void,
-  ): void {
-    this.sessionStorage.get(identifier, storeName, callback);
-  }
-
-  set(identifier: string, storeName: string, value: DataValue, expirationDate: Date): void {
-    this.sessionStorage.set(identifier, storeName, value, expirationDate);
-  }
-
-  remove(identifier: string, storeName: string): void {
-    this.sessionStorage.remove(identifier, storeName);
-  }
-
-  clear(): void {
-    this.sessionStorage.clear();
-  }
-}
-
-export class TwoLayerCache {
-  private clientCache: TwoLayerClientCache | null = null;
-  private serverCache: TwoLayerServerCache;
-  private isClient: boolean;
-  private config: CacheConfig;
-
-  constructor(config: CacheConfig) {
-    this.config = config;
-    const serverStorage = new ServerlessAdapter(config);
-    this.isClient = typeof window !== 'undefined';
-
-    if (this.isClient) {
-      const clientStorage = new SessionStorageAdapter(config);
-      this.clientCache = new TwoLayerClientCache(config, clientStorage, serverStorage);
-    }
-
-    this.serverCache = new TwoLayerServerCache(config, serverStorage);
-
-    if (this.isClient) {
-      realTimeSync.subscribe('*', '*', (data: DataValue) => {
-        if (this.clientCache && typeof data === 'object' && data !== null) {
-          const cacheResult = data as Partial<CacheResult>;
-          if (
-            typeof cacheResult.identifier === 'string' &&
-            typeof cacheResult.storeName === 'string' &&
-            cacheResult.value !== undefined &&
-            cacheResult.expirationDate instanceof Date
-          ) {
-            this.clientCache.set(
-              cacheResult.identifier,
-              cacheResult.storeName,
-              cacheResult.value,
-              cacheResult.expirationDate,
-            );
-          }
-        }
-      });
-    }
-  }
-
-  async get(identifier: string, storeName: string): Promise<CacheResult> {
-    if (this.isClient && this.clientCache) {
-      return new Promise((resolve) => {
-        this.clientCache!.get(identifier, storeName, (clientResult) => {
-          if (clientResult && clientResult.value !== undefined) {
-            resolve(clientResult);
+export async function get(
+  identifier: string,
+  storeName: string,
+  serverlessConfig: ServerlessCacheConfig,
+  sessionConfig: SessionCacheConfig,
+  mode: TwoLayerMode = 'both',
+  globalConfig: GlobalConfig,
+): Promise<CacheResult> {
+  const startTime = process.hrtime();
+  logger.info('Getting from cache', { identifier, storeName, mode });
+  await initializeCaches(serverlessConfig, sessionConfig, globalConfig);
+  try {
+    let result: CacheResult;
+    if (mode === 'session' && typeof window !== 'undefined') {
+      logger.debug('Getting from session storage', { identifier, storeName });
+      result = await new Promise<CacheResult>((resolve) => {
+        sessionStorage!.get(identifier, storeName, (res: CacheResult | undefined) => {
+          if (res) {
+            logger.info('Retrieved from session storage', { identifier, storeName });
+            resolve(res);
           } else {
-            this.serverCache.get(identifier, storeName).then((serverResult) => {
-              if (serverResult.value !== undefined) {
-                this.clientCache!.set(
-                  identifier,
-                  storeName,
-                  serverResult.value,
-                  serverResult.expirationDate,
-                );
-              }
-              resolve(serverResult);
+            logger.info('Not found in session storage, returning empty result', {
+              identifier,
+              storeName,
             });
+            resolve(createEmptyResult(identifier, storeName));
           }
         });
       });
+    } else if (mode === 'serverless') {
+      logger.debug('Getting from serverless cache', { identifier, storeName });
+      result = await serverlessCache!.get(identifier, storeName);
+      logger.info('Retrieved from serverless cache', { identifier, storeName });
     } else {
-      return this.serverCache.get(identifier, storeName);
-    }
-  }
-
-  async set(
-    identifier: string,
-    storeName: string,
-    value: DataValue,
-    expirationDate: Date,
-  ): Promise<void> {
-    await this.serverCache.set(identifier, storeName, value, expirationDate);
-    if (this.isClient && this.clientCache) {
-      this.clientCache.set(identifier, storeName, value, expirationDate);
-    }
-  }
-
-  async remove(identifier: string, storeName: string): Promise<void> {
-    await this.serverCache.remove(identifier, storeName);
-    if (this.isClient && this.clientCache) {
-      this.clientCache.remove(identifier, storeName);
-    }
-  }
-
-  async clear(): Promise<void> {
-    await this.serverCache.clear();
-    if (this.isClient && this.clientCache) {
-      this.clientCache.clear();
-    }
-  }
-
-  subscribeToUpdates(
-    identifier: string,
-    storeName: string,
-    listener: (data: DataValue) => void,
-  ): () => void {
-    return realTimeSync.subscribe(identifier, storeName, listener);
-  }
-
-  isClientSide(): boolean {
-    return this.isClient;
-  }
-
-  async preloadCache(data: { [key: string]: { [store: string]: DataValue } }): Promise<void> {
-    for (const [identifier, stores] of Object.entries(data)) {
-      for (const [storeName, value] of Object.entries(stores)) {
-        await this.set(
+      // mode is 'both' or we're on the server side
+      if (typeof window !== 'undefined') {
+        logger.debug('Attempting to get from session storage first', { identifier, storeName });
+        result = await new Promise<CacheResult>((resolve) => {
+          sessionStorage!.get(
+            identifier,
+            storeName,
+            async (sessionResult: CacheResult | undefined) => {
+              if (sessionResult && sessionResult.value !== undefined) {
+                logger.info('Retrieved from session storage', { identifier, storeName });
+                resolve(sessionResult);
+              } else {
+                logger.debug('Not found in session storage, trying serverless cache', {
+                  identifier,
+                  storeName,
+                });
+                const serverResult = await serverlessCache!.get(identifier, storeName);
+                if (serverResult.value !== undefined) {
+                  logger.info('Retrieved from serverless cache', { identifier, storeName });
+                  logger.debug('Updating session storage with serverless result', {
+                    identifier,
+                    storeName,
+                  });
+                  sessionStorage!.set(
+                    identifier,
+                    storeName,
+                    serverResult.value,
+                    serverResult.expirationDate,
+                  );
+                } else {
+                  logger.info('Not found in serverless cache', { identifier, storeName });
+                }
+                resolve(serverResult);
+              }
+            },
+          );
+        });
+      } else {
+        logger.debug('On server side, getting directly from serverless cache', {
           identifier,
           storeName,
-          value,
-          new Date(Date.now() + this.config.cacheMaxAge),
-        );
+        });
+        result = await serverlessCache!.get(identifier, storeName);
+        logger.info('Retrieved from serverless cache', { identifier, storeName });
       }
     }
+    const [seconds, nanoseconds] = process.hrtime(startTime);
+    const duration = seconds * 1000 + nanoseconds / 1e6;
+    logger.debug('Cache get operation completed', {
+      duration: `${duration.toFixed(2)}ms`,
+      resultFound: result.value !== undefined,
+    });
+    return result;
+  } catch (error) {
+    logger.error('Error getting from cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      identifier,
+      storeName,
+      mode,
+    });
+    throw error;
   }
 }
 
-export default TwoLayerCache;
+export async function remove(
+  identifier: string,
+  storeName: string,
+  serverlessConfig: ServerlessCacheConfig,
+  sessionConfig: SessionCacheConfig,
+  mode: TwoLayerMode = 'both',
+  globalConfig: GlobalConfig,
+): Promise<void> {
+  const startTime = process.hrtime();
+  logger.info('Removing from cache', { identifier, storeName, mode });
+  await initializeCaches(serverlessConfig, sessionConfig, globalConfig);
+  try {
+    if (mode === 'serverless' || mode === 'both') {
+      logger.debug('Removing from serverless cache', { identifier, storeName });
+      await serverlessCache!.remove(identifier, storeName);
+      logger.info('Removed from serverless cache', { identifier, storeName });
+    }
+    if ((mode === 'session' || mode === 'both') && typeof window !== 'undefined') {
+      logger.debug('Removing from session storage', { identifier, storeName });
+      sessionStorage!.remove(identifier, storeName);
+      logger.info('Removed from session storage', { identifier, storeName });
+    }
+    const [seconds, nanoseconds] = process.hrtime(startTime);
+    const duration = seconds * 1000 + nanoseconds / 1e6;
+    logger.debug('Cache remove operation completed', { duration: `${duration.toFixed(2)}ms` });
+  } catch (error) {
+    logger.error('Error removing from cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      identifier,
+      storeName,
+      mode,
+    });
+    throw error;
+  }
+}
+
+function createEmptyResult(identifier: string, storeName: string): CacheResult {
+  logger.debug('Creating empty result', { identifier, storeName });
+  return {
+    identifier,
+    storeName,
+    value: undefined,
+    expirationDate: new Date(0),
+    lastUpdatedDate: new Date(0),
+    lastAccessedDate: new Date(0),
+    getHitCount: 0,
+    setHitCount: 0,
+  };
+}
+
+export function initializeTwoLayerModule(
+  serverlessConfig: ServerlessCacheConfig,
+  sessionConfig: SessionCacheConfig,
+  globalConfig: GlobalConfig,
+): void {
+  initializeLogger(globalConfig);
+  logger.info('Two-layer cache module initialized', {
+    serverlessConfig: { ...serverlessConfig, encryptionPassword: '[REDACTED]' },
+    sessionConfig: { ...sessionConfig, encryptionPassword: '[REDACTED]' },
+    globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
+  });
+  void initializeCaches(serverlessConfig, sessionConfig, globalConfig);
+}
+
+// Add an unhandled rejection handler
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  logger.error('Unhandled Rejection at:', {
+    promise,
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+});
+
+export { logger as twoLayerLogger };

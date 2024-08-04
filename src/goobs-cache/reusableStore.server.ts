@@ -1,121 +1,358 @@
 /**
  * @file ReusableStore.server.ts
- * @description Implements server-side caching functionality with configuration loading and serverless storage interface.
+ * @description Implements server-side caching functionality with serverless storage interface.
  */
 'use server';
 
-import fs from 'fs/promises';
+import { createLogger, format, transports } from 'winston';
+import ServerlessCache, { createServerlessCache } from '../cache/serverless.server';
+import {
+  ServerlessCacheConfig,
+  DataValue,
+  CacheMode,
+  CacheResult,
+  EvictionPolicy,
+  GlobalConfig,
+} from '../types';
 import path from 'path';
-import { ServerlessCache, createServerlessCache } from '../cache/serverless.server';
-import { CacheConfig, DataValue, CacheMode, CacheResult } from '../types';
+
+let logger: ReturnType<typeof createLogger> | null = null;
+
+function initializeLogger(globalConfig: GlobalConfig) {
+  if (!logger) {
+    logger = createLogger({
+      level: globalConfig.logLevel,
+      silent: !globalConfig.loggingEnabled,
+      format: format.combine(
+        format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+        format.errors({ stack: true }),
+        format.splat(),
+        format.json(),
+        format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
+      ),
+      defaultMeta: { service: 'reusable-store-server' },
+      transports: [
+        new transports.Console({
+          format: format.combine(
+            format.colorize(),
+            format.printf(({ level, message, timestamp, metadata }) => {
+              let msg = `${timestamp} [${level}]: ${message}`;
+              if (Object.keys(metadata).length > 0) {
+                msg += '\n\t' + JSON.stringify(metadata);
+              }
+              return msg;
+            }),
+          ),
+        }),
+        new transports.File({
+          filename: path.join(globalConfig.logDirectory, 'reusable-store-error.log'),
+          level: 'error',
+        }),
+        new transports.File({
+          filename: path.join(globalConfig.logDirectory, 'reusable-store-combined.log'),
+        }),
+      ],
+    });
+  }
+}
 
 let serverlessCache: ServerlessCache | null = null;
 
-/**
- * Loads the cache configuration from a JSON file.
- *
- * @returns {Promise<CacheConfig>} A promise that resolves to the cache configuration.
- * @throws {Error} If the configuration file cannot be loaded or parsed.
- */
-export async function loadConfig(): Promise<CacheConfig> {
-  const configPath = path.resolve(process.cwd(), '.reusablestore.json');
+async function initializeServerlessCache(
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
+): Promise<ServerlessCache> {
+  const startTime = process.hrtime();
+  if (!logger) {
+    initializeLogger(globalConfig);
+  }
+  logger!.debug('Initializing serverless cache...', {
+    config: { ...config, encryptionPassword: '[REDACTED]' },
+    currentInstance: serverlessCache ? 'exists' : 'null',
+  });
+
   try {
-    const configFile = await fs.readFile(configPath, 'utf-8');
-    return JSON.parse(configFile) as CacheConfig;
+    if (!serverlessCache) {
+      const encryptionPassword =
+        process.env.ENCRYPTION_PASSWORD || config.encryption.encryptionPassword;
+      serverlessCache = createServerlessCache(config, encryptionPassword, globalConfig);
+      const [seconds, nanoseconds] = process.hrtime(startTime);
+      const duration = seconds * 1000 + nanoseconds / 1e6;
+      logger!.info('Serverless cache initialized successfully.', {
+        duration: `${duration.toFixed(2)}ms`,
+        cacheConfig: { ...config, encryptionPassword: '[REDACTED]' },
+      });
+    } else {
+      logger!.debug('Serverless cache already initialized, reusing existing instance.');
+    }
+    return serverlessCache;
   } catch (error) {
-    console.error('Error loading config:', error);
-    throw new Error('Failed to load configuration');
+    logger!.error('Failed to initialize serverless cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      config: { ...config, encryptionPassword: '[REDACTED]' },
+    });
+    throw error;
   }
 }
 
-/**
- * Initializes the serverless cache.
- *
- * @returns {Promise<ServerlessCache>} A promise that resolves to the initialized ServerlessCache instance.
- */
-async function initializeServerlessCache(): Promise<ServerlessCache> {
-  if (!serverlessCache) {
-    const config = await loadConfig();
-    const encryptionPassword = process.env.ENCRYPTION_PASSWORD || 'default-password';
-    serverlessCache = await createServerlessCache(config, encryptionPassword);
-  }
-  return serverlessCache;
-}
-
-/**
- * Sets a value in the serverless cache.
- *
- * @param {string} identifier - The identifier for the cache item.
- * @param {string} storeName - The store name for the cache item.
- * @param {DataValue} value - The value to set.
- * @param {Date} expirationDate - The expiration date for the cached item.
- * @param {CacheMode} mode - The caching mode (always 'server' for serverless caching).
- * @returns {Promise<void>}
- */
 export async function serverlessSet(
   identifier: string,
   storeName: string,
   value: DataValue,
   expirationDate: Date,
   mode: CacheMode,
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
 ): Promise<void> {
-  if (mode !== 'server') {
-    throw new Error(`Invalid cache mode for serverless caching: ${mode}`);
+  const startTime = process.hrtime();
+  if (!logger) {
+    initializeLogger(globalConfig);
   }
-  const cache = await initializeServerlessCache();
-  await cache.set(identifier, storeName, value, expirationDate);
+  logger!.info('Setting value in serverless cache', {
+    identifier,
+    storeName,
+    mode,
+    valueType: typeof value,
+    expirationDate: expirationDate.toISOString(),
+  });
+
+  try {
+    if (mode !== 'serverless') {
+      throw new Error(`Invalid cache mode for serverless caching: ${mode}`);
+    }
+
+    const cache = await initializeServerlessCache(config, globalConfig);
+    await cache.set(identifier, storeName, value, expirationDate);
+
+    const [seconds, nanoseconds] = process.hrtime(startTime);
+    const duration = seconds * 1000 + nanoseconds / 1e6;
+    logger!.info('Value set successfully in serverless cache.', {
+      identifier,
+      storeName,
+      valueType: typeof value,
+      expirationDate: expirationDate.toISOString(),
+      duration: `${duration.toFixed(2)}ms`,
+    });
+  } catch (error) {
+    logger!.error('Failed to set value in serverless cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      identifier,
+      storeName,
+      mode,
+    });
+    throw error;
+  }
 }
 
-/**
- * Retrieves a value from the serverless cache.
- *
- * @param {string} identifier - The identifier for the cache item.
- * @param {string} storeName - The store name for the cache item.
- * @param {CacheMode} mode - The caching mode (always 'server' for serverless caching).
- * @returns {Promise<CacheResult>} A promise that resolves to the CacheResult containing the retrieved value and metadata.
- */
 export async function serverlessGet(
   identifier: string,
   storeName: string,
   mode: CacheMode,
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
 ): Promise<CacheResult> {
-  if (mode !== 'server') {
-    throw new Error(`Invalid cache mode for serverless caching: ${mode}`);
+  const startTime = process.hrtime();
+  if (!logger) {
+    initializeLogger(globalConfig);
   }
-  const cache = await initializeServerlessCache();
-  const result = await cache.get(identifier, storeName);
-  if (result.value !== undefined) {
-    return result;
-  }
-  // Return a default CacheResult if no value was found
-  return {
+  logger!.info('Getting value from serverless cache', {
     identifier,
     storeName,
-    value: undefined,
-    expirationDate: new Date(0),
-    lastUpdatedDate: new Date(0),
-    lastAccessedDate: new Date(0),
-    getHitCount: 0,
-    setHitCount: 0,
-  };
+    mode,
+  });
+
+  try {
+    if (mode !== 'serverless') {
+      throw new Error(`Invalid cache mode for serverless caching: ${mode}`);
+    }
+
+    const cache = await initializeServerlessCache(config, globalConfig);
+    const result = await cache.get(identifier, storeName);
+
+    const [seconds, nanoseconds] = process.hrtime(startTime);
+    const duration = seconds * 1000 + nanoseconds / 1e6;
+
+    if (result.value !== undefined) {
+      logger!.info('Value retrieved successfully from serverless cache.', {
+        identifier,
+        storeName,
+        valueType: typeof result.value,
+        expirationDate: result.expirationDate.toISOString(),
+        lastUpdatedDate: result.lastUpdatedDate.toISOString(),
+        lastAccessedDate: result.lastAccessedDate.toISOString(),
+        getHitCount: result.getHitCount,
+        setHitCount: result.setHitCount,
+        duration: `${duration.toFixed(2)}ms`,
+      });
+    } else {
+      logger!.warn('Value not found in serverless cache.', {
+        identifier,
+        storeName,
+        duration: `${duration.toFixed(2)}ms`,
+      });
+    }
+
+    return result;
+  } catch (error) {
+    logger!.error('Failed to get value from serverless cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      identifier,
+      storeName,
+      mode,
+    });
+    throw error;
+  }
 }
 
-/**
- * Removes a value from the serverless cache.
- *
- * @param {string} identifier - The identifier for the cache item.
- * @param {string} storeName - The store name for the cache item.
- * @param {CacheMode} mode - The caching mode (always 'server' for serverless caching).
- * @returns {Promise<void>}
- */
 export async function serverlessRemove(
   identifier: string,
   storeName: string,
   mode: CacheMode,
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
 ): Promise<void> {
-  if (mode !== 'server') {
-    throw new Error(`Invalid cache mode for serverless caching: ${mode}`);
+  const startTime = process.hrtime();
+  if (!logger) {
+    initializeLogger(globalConfig);
   }
-  const cache = await initializeServerlessCache();
-  await cache.remove(identifier, storeName);
+  logger!.info('Removing value from serverless cache', {
+    identifier,
+    storeName,
+    mode,
+  });
+
+  try {
+    if (mode !== 'serverless') {
+      throw new Error(`Invalid cache mode for serverless caching: ${mode}`);
+    }
+
+    const cache = await initializeServerlessCache(config, globalConfig);
+    await cache.remove(identifier, storeName);
+
+    const [seconds, nanoseconds] = process.hrtime(startTime);
+    const duration = seconds * 1000 + nanoseconds / 1e6;
+    logger!.info('Value removed successfully from serverless cache.', {
+      identifier,
+      storeName,
+      duration: `${duration.toFixed(2)}ms`,
+    });
+  } catch (error) {
+    logger!.error('Failed to remove value from serverless cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      identifier,
+      storeName,
+      mode,
+    });
+    throw error;
+  }
 }
+
+export async function serverlessClear(
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
+): Promise<void> {
+  const startTime = process.hrtime();
+  if (!logger) {
+    initializeLogger(globalConfig);
+  }
+  logger!.info('Clearing all values from serverless cache');
+
+  try {
+    const cache = await initializeServerlessCache(config, globalConfig);
+    await cache.clear();
+
+    const [seconds, nanoseconds] = process.hrtime(startTime);
+    const duration = seconds * 1000 + nanoseconds / 1e6;
+    logger!.info('All values cleared successfully from serverless cache.', {
+      duration: `${duration.toFixed(2)}ms`,
+    });
+  } catch (error) {
+    logger!.error('Failed to clear all values from serverless cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    throw error;
+  }
+}
+
+export async function serverlessSetEvictionPolicy(
+  policy: EvictionPolicy,
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
+): Promise<void> {
+  const startTime = process.hrtime();
+  if (!logger) {
+    initializeLogger(globalConfig);
+  }
+  logger!.info('Setting eviction policy for serverless cache', { policy });
+
+  try {
+    const cache = await initializeServerlessCache(config, globalConfig);
+    await cache.setEvictionPolicy(policy);
+
+    const [seconds, nanoseconds] = process.hrtime(startTime);
+    const duration = seconds * 1000 + nanoseconds / 1e6;
+    logger!.info('Eviction policy set successfully for serverless cache.', {
+      policy,
+      duration: `${duration.toFixed(2)}ms`,
+    });
+  } catch (error) {
+    logger!.error('Failed to set eviction policy for serverless cache', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      policy,
+    });
+    throw error;
+  }
+}
+
+export function initializeServerlessModule(
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
+): void {
+  initializeLogger(globalConfig);
+  logger!.info('Serverless cache module initialized', {
+    config: { ...config, encryptionPassword: '[REDACTED]' },
+    globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
+  });
+  void initializeServerlessCache(config, globalConfig);
+}
+
+process.on('uncaughtException', (error: Error) => {
+  if (!logger) {
+    const globalConfig: GlobalConfig = {
+      loggingEnabled: true,
+      logLevel: 'error',
+      logDirectory: 'logs',
+    };
+    initializeLogger(globalConfig);
+  }
+  logger!.error('Uncaught Exception:', {
+    error: error.message,
+    stack: error.stack,
+  });
+  // Gracefully exit the process after logging
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  if (!logger) {
+    const globalConfig: GlobalConfig = {
+      loggingEnabled: true,
+      logLevel: 'error',
+      logDirectory: 'logs',
+    };
+    initializeLogger(globalConfig);
+  }
+  logger!.error('Unhandled Rejection at:', {
+    promise,
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+});
+
+export { logger as serverlessLogger };

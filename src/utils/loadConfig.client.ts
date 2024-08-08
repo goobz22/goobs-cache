@@ -1,5 +1,5 @@
 import { SessionCacheConfig, CookieCacheConfig, GlobalConfig } from '../types';
-import defaultConfig from '../../.cache.config';
+import { sessionConfig, cookieConfig, globalConfig } from '../../.cache.config';
 import { ClientLogger } from './logger.client';
 
 type ClientCacheConfig = {
@@ -10,9 +10,9 @@ type ClientCacheConfig = {
 
 const ClientConfigModule = {
   config: {
-    session: defaultConfig.session,
-    cookie: defaultConfig.cookie,
-    global: defaultConfig.global,
+    session: sessionConfig,
+    cookie: cookieConfig,
+    global: globalConfig,
   } as ClientCacheConfig,
 
   initializeLogger(): void {
@@ -52,7 +52,6 @@ const ClientConfigModule = {
 
     // Reinitialize logger with updated global config
     this.initializeLogger();
-
     ClientLogger.info('Client cache configuration updated successfully');
   },
 };

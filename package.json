@@ -1,11 +1,11 @@
 {
   "name": "goobs-cache",
-  "version": "1.5.1",
-  "description": "A comprehensive data management solution for JavaScript applications, offering versatile caching (including Redis-like functionality), state management (similar to Jotai), and storage options (cookies, session storage, server-side). Features encryption, compression, auto-optimization, and supports various data structures.",
+  "version": "1.6.0",
+  "description": "A versatile caching and state management solution for JavaScript applications. Offers serverless, session, and cookie-based caching with support for encryption, compression, and auto-optimization. Provides a Jotai-like API for seamless integration. Handles complex data structures and enables cross-environment persistence.",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "build": "yarn lint && yarn typecheck && yarn pretty",
+    "build": "yarn pretty && yarn lint && yarn typecheck",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
@@ -17,8 +17,8 @@
   "devDependencies": {
     "@types/jest": "^29.5.12",
     "@types/node": "^20.14.10",
-    "@typescript-eslint/eslint-plugin": "^7.16.0",
-    "@typescript-eslint/parser": "^7.16.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.1",
+    "@typescript-eslint/parser": "^8.0.1",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-jest": "^28.6.0",
@@ -34,6 +34,7 @@
     "@types/lz4js": "^0.2.1",
     "@types/react": "^18.3.3",
     "goobs-testing": "^0.1.1",
+    "jotai": "^2.9.2",
     "lru-cache": "^10.3.0",
     "lz4js": "^0.2.0",
     "react": "^18.3.1",

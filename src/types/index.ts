@@ -90,7 +90,7 @@ export interface JSONObject {
   [key: string]: JSONPrimitive | JSONObject | JSONArray;
 }
 
-export interface JSONArray extends Array<JSONPrimitive | JSONObject | JSONArray> {}
+export type JSONArray = Array<JSONPrimitive | JSONObject | JSONArray>;
 
 export type DataValue =
   | ComplexValue

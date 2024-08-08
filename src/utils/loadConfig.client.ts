@@ -1,5 +1,5 @@
 import { SessionCacheConfig, CookieCacheConfig, GlobalConfig } from '../types';
-import { sessionConfig, cookieConfig, globalConfig } from '../../.cache.config';
+import { sessionConfig, cookieConfig, globalConfig } from '../../cache.config';
 import { ClientLogger } from './logger.client';
 
 type ClientCacheConfig = {

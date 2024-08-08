@@ -1,5 +1,5 @@
 import { ServerlessCacheConfig, GlobalConfig } from '../types';
-import { serverlessConfig, globalConfig } from '../../.cache.config';
+import { serverlessConfig, globalConfig } from '../../cache.config';
 import fs from 'fs/promises';
 import path from 'path';
 import { ServerLogger } from './logger.server';

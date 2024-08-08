@@ -12,14 +12,12 @@ import {
   pbkdf2,
 } from 'crypto';
 import { EncryptionConfig, EncryptedValue, GlobalConfig } from '../types';
-import { createLogger, format, transports } from 'winston';
-
-let logger: ReturnType<typeof createLogger>;
+import { ClientLogger } from './logger.client';
 
 const isBrowser = typeof window !== 'undefined' && 'crypto' in window;
 
 function getRandomValues(array: Uint8Array): Uint8Array {
-  logger.debug('Generating random values', {
+  ClientLogger.debug('Generating random values', {
     length: array.length,
     environment: isBrowser ? 'browser' : 'node',
   });
@@ -50,7 +48,7 @@ interface CryptoImplementation {
 
 class BrowserCrypto implements CryptoImplementation {
   deriveKey(password: string, salt: Uint8Array, callback: (key: CipherKey) => void): void {
-    logger.debug('Deriving key in the browser', {
+    ClientLogger.debug('Deriving key in the browser', {
       passwordLength: password.length,
       saltLength: salt.length,
     });
@@ -77,13 +75,13 @@ class BrowserCrypto implements CryptoImplementation {
       )
       .then((key) => {
         const endTime = performance.now();
-        logger.debug('Key derived successfully in the browser', {
+        ClientLogger.debug('Key derived successfully in the browser', {
           derivationTime: `${(endTime - startTime).toFixed(2)}ms`,
         });
         callback(key as unknown as CipherKey);
       })
       .catch((error: Error) => {
-        logger.error('Error deriving key in the browser', {
+        ClientLogger.error('Error deriving key in the browser', {
           error: error.message,
           stack: error.stack,
         });
@@ -96,7 +94,7 @@ class BrowserCrypto implements CryptoImplementation {
     data: Uint8Array,
     callback: (result: { encrypted: Uint8Array; authTag: Uint8Array }) => void,
   ): void {
-    logger.debug('Encrypting data in the browser', {
+    ClientLogger.debug('Encrypting data in the browser', {
       dataLength: data.length,
       ivLength: iv.length,
     });
@@ -107,7 +105,7 @@ class BrowserCrypto implements CryptoImplementation {
         const encryptedContent = new Uint8Array(encrypted, 0, encrypted.byteLength - 16);
         const authTag = new Uint8Array(encrypted, encrypted.byteLength - 16);
         const endTime = performance.now();
-        logger.debug('Data encrypted successfully in the browser', {
+        ClientLogger.debug('Data encrypted successfully in the browser', {
           encryptionTime: `${(endTime - startTime).toFixed(2)}ms`,
           encryptedLength: encryptedContent.length,
           authTagLength: authTag.length,
@@ -118,7 +116,7 @@ class BrowserCrypto implements CryptoImplementation {
         });
       })
       .catch((error: Error) => {
-        logger.error('Error encrypting data in the browser', {
+        ClientLogger.error('Error encrypting data in the browser', {
           error: error.message,
           stack: error.stack,
         });
@@ -132,7 +130,7 @@ class BrowserCrypto implements CryptoImplementation {
     authTag: Uint8Array,
     callback: (result: Uint8Array | null) => void,
   ): void {
-    logger.debug('Decrypting data in the browser', {
+    ClientLogger.debug('Decrypting data in the browser', {
       dataLength: data.length,
       ivLength: iv.length,
       authTagLength: authTag.length,
@@ -147,14 +145,14 @@ class BrowserCrypto implements CryptoImplementation {
       .decrypt({ name: 'AES-GCM', iv: iv }, key as unknown as CryptoKey, combinedData)
       .then((decrypted) => {
         const endTime = performance.now();
-        logger.debug('Data decrypted successfully in the browser', {
+        ClientLogger.debug('Data decrypted successfully in the browser', {
           decryptionTime: `${(endTime - startTime).toFixed(2)}ms`,
           decryptedLength: decrypted.byteLength,
         });
         callback(new Uint8Array(decrypted));
       })
       .catch((error: Error) => {
-        logger.error('Error decrypting data in the browser', {
+        ClientLogger.error('Error decrypting data in the browser', {
           error: error.message,
           stack: error.stack,
         });
@@ -163,21 +161,21 @@ class BrowserCrypto implements CryptoImplementation {
   }
 
   exportKey(key: CipherKey, callback: (result: Uint8Array) => void): void {
-    logger.debug('Exporting key in the browser');
+    ClientLogger.debug('Exporting key in the browser');
 
     const startTime = performance.now();
     window.crypto.subtle
       .exportKey('raw', key as unknown as CryptoKey)
       .then((exported) => {
         const endTime = performance.now();
-        logger.debug('Key exported successfully in the browser', {
+        ClientLogger.debug('Key exported successfully in the browser', {
           exportTime: `${(endTime - startTime).toFixed(2)}ms`,
           exportedKeyLength: exported.byteLength,
         });
         callback(new Uint8Array(exported));
       })
       .catch((error: Error) => {
-        logger.error('Error exporting key in the browser', {
+        ClientLogger.error('Error exporting key in the browser', {
           error: error.message,
           stack: error.stack,
         });
@@ -187,7 +185,7 @@ class BrowserCrypto implements CryptoImplementation {
 
 class NodeCrypto implements CryptoImplementation {
   deriveKey(password: string, salt: Uint8Array, callback: (key: CipherKey) => void): void {
-    logger.debug('Deriving key in Node.js', {
+    ClientLogger.debug('Deriving key in Node.js', {
       passwordLength: password.length,
       saltLength: salt.length,
     });
@@ -195,12 +193,15 @@ class NodeCrypto implements CryptoImplementation {
     const startTime = process.hrtime();
     pbkdf2(password, salt, 100000, 32, 'sha256', (err: Error | null, derivedKey: Buffer) => {
       if (err) {
-        logger.error('Key derivation error in Node.js', { error: err.message, stack: err.stack });
+        ClientLogger.error('Key derivation error in Node.js', {
+          error: err.message,
+          stack: err.stack,
+        });
         throw err;
       }
       const endTime = process.hrtime(startTime);
       const derivationTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
-      logger.debug('Key derived successfully in Node.js', {
+      ClientLogger.debug('Key derived successfully in Node.js', {
         derivationTime: `${derivationTime.toFixed(2)}ms`,
         derivedKeyLength: derivedKey.length,
       });
@@ -214,7 +215,7 @@ class NodeCrypto implements CryptoImplementation {
     data: Uint8Array,
     callback: (result: { encrypted: Uint8Array; authTag: Uint8Array }) => void,
   ): void {
-    logger.debug('Encrypting data in Node.js', {
+    ClientLogger.debug('Encrypting data in Node.js', {
       dataLength: data.length,
       ivLength: iv.length,
     });
@@ -235,7 +236,7 @@ class NodeCrypto implements CryptoImplementation {
     const authTag = new Uint8Array(cipher.getAuthTag());
     const endTime = process.hrtime(startTime);
     const encryptionTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
-    logger.debug('Data encrypted successfully in Node.js', {
+    ClientLogger.debug('Data encrypted successfully in Node.js', {
       encryptionTime: `${encryptionTime.toFixed(2)}ms`,
       encryptedLength: encrypted.length,
       authTagLength: authTag.length,
@@ -250,7 +251,7 @@ class NodeCrypto implements CryptoImplementation {
     authTag: Uint8Array,
     callback: (result: Uint8Array | null) => void,
   ): void {
-    logger.debug('Decrypting data in Node.js', {
+    ClientLogger.debug('Decrypting data in Node.js', {
       dataLength: data.length,
       ivLength: iv.length,
       authTagLength: authTag.length,
@@ -270,13 +271,13 @@ class NodeCrypto implements CryptoImplementation {
       );
       const endTime = process.hrtime(startTime);
       const decryptionTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
-      logger.debug('Data decrypted successfully in Node.js', {
+      ClientLogger.debug('Data decrypted successfully in Node.js', {
         decryptionTime: `${decryptionTime.toFixed(2)}ms`,
         decryptedLength: decrypted.length,
       });
       callback(decrypted);
     } catch (error) {
-      logger.error('Error decrypting data in Node.js', {
+      ClientLogger.error('Error decrypting data in Node.js', {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -285,7 +286,7 @@ class NodeCrypto implements CryptoImplementation {
   }
 
   exportKey(key: CipherKey, callback: (result: Uint8Array) => void): void {
-    logger.debug('Exporting key in Node.js');
+    ClientLogger.debug('Exporting key in Node.js');
 
     const startTime = process.hrtime();
     let exportedKey: Uint8Array;
@@ -300,7 +301,7 @@ class NodeCrypto implements CryptoImplementation {
     }
     const endTime = process.hrtime(startTime);
     const exportTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
-    logger.debug('Key exported successfully in Node.js', {
+    ClientLogger.debug('Key exported successfully in Node.js', {
       exportTime: `${exportTime.toFixed(2)}ms`,
       exportedKeyLength: exportedKey.length,
     });
@@ -317,8 +318,8 @@ export class EncryptionModule {
     this.config = config;
     this.globalConfig = globalConfig;
     this.cryptoImpl = isBrowser ? new BrowserCrypto() : new NodeCrypto();
-    this.initializeLogger();
-    logger.info('EncryptionModule initialized', {
+    ClientLogger.initializeLogger(globalConfig);
+    ClientLogger.info('EncryptionModule initialized', {
       config: { ...config, encryptionPassword: '[REDACTED]' },
       globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
       environment: isBrowser ? 'Browser' : 'Node.js',
@@ -326,39 +327,8 @@ export class EncryptionModule {
     });
   }
 
-  private initializeLogger(): void {
-    logger = createLogger({
-      level: this.globalConfig.logLevel,
-      silent: !this.globalConfig.loggingEnabled,
-      format: format.combine(
-        format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-        format.errors({ stack: true }),
-        format.splat(),
-        format.json(),
-        format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
-      ),
-      defaultMeta: { service: 'encryption-service' },
-      transports: [
-        new transports.Console({
-          format: format.combine(
-            format.colorize(),
-            format.printf(({ level, message, timestamp, metadata }) => {
-              let msg = `${timestamp} [${level}]: ${message}`;
-              if (Object.keys(metadata).length > 0) {
-                msg += '\n\t' + JSON.stringify(metadata);
-              }
-              return msg;
-            }),
-          ),
-        }),
-        new transports.File({ filename: 'encryption-error.log', level: 'error' }),
-        new transports.File({ filename: 'encryption-combined.log', level: 'debug' }),
-      ],
-    });
-  }
-
   encrypt(value: Uint8Array, callback: (result: EncryptedValue) => void): void {
-    logger.info('Starting encryption process', {
+    ClientLogger.info('Starting encryption process', {
       valueLength: value.length,
       algorithm: this.config.algorithm,
     });
@@ -368,7 +338,7 @@ export class EncryptionModule {
     const salt = getRandomValues(new Uint8Array(16));
 
     if (value.length === 0) {
-      logger.debug('Handling empty string case in encryption');
+      ClientLogger.debug('Handling empty string case in encryption');
       callback({
         type: 'encrypted',
         encryptedData: new Uint8Array(0),
@@ -390,7 +360,7 @@ export class EncryptionModule {
             ? (endTime as number) - (startTime as number)
             : ((endTime as [number, number])[0] * 1e9 + (endTime as [number, number])[1]) / 1e6;
 
-          logger.info('Encryption process completed successfully', {
+          ClientLogger.info('Encryption process completed successfully', {
             totalTime: `${totalTime.toFixed(2)}ms`,
             inputLength: value.length,
             encryptedLength: encrypted.length,
@@ -414,7 +384,7 @@ export class EncryptionModule {
   }
 
   decrypt(encryptedValue: EncryptedValue, callback: (result: Uint8Array | null) => void): void {
-    logger.info('Starting decryption process', {
+    ClientLogger.info('Starting decryption process', {
       encryptedDataLength: encryptedValue.encryptedData.length,
       algorithm: this.config.algorithm,
       ivLength: encryptedValue.iv.length,
@@ -426,7 +396,7 @@ export class EncryptionModule {
     const { iv, salt, encryptedData, authTag } = encryptedValue;
 
     if (encryptedData.length === 0) {
-      logger.debug('Handling empty string case in decryption');
+      ClientLogger.debug('Handling empty string case in decryption');
       callback(new Uint8Array(0));
       return;
     }
@@ -441,7 +411,7 @@ export class EncryptionModule {
           : ((endTime as [number, number])[0] * 1e9 + (endTime as [number, number])[1]) / 1e6;
 
         if (decrypted === null) {
-          logger.error('Decryption error', {
+          ClientLogger.error('Decryption error', {
             totalTime: `${totalTime.toFixed(2)}ms`,
             encryptedDataLength: encryptedData.length,
             ivLength: iv.length,
@@ -449,7 +419,7 @@ export class EncryptionModule {
             authTagLength: authTag.length,
           });
         } else {
-          logger.info('Decryption process completed successfully', {
+          ClientLogger.info('Decryption process completed successfully', {
             totalTime: `${totalTime.toFixed(2)}ms`,
             encryptedDataLength: encryptedData.length,
             decryptedDataLength: decrypted.length,
@@ -461,7 +431,7 @@ export class EncryptionModule {
   }
 
   updateConfig(newConfig: EncryptionConfig, newGlobalConfig: GlobalConfig): void {
-    logger.info('Updating EncryptionModule configuration', {
+    ClientLogger.info('Updating EncryptionModule configuration', {
       oldConfig: { ...this.config, encryptionPassword: '[REDACTED]' },
       newConfig: { ...newConfig, encryptionPassword: '[REDACTED]' },
       oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
@@ -469,7 +439,7 @@ export class EncryptionModule {
     });
     this.config = newConfig;
     this.globalConfig = newGlobalConfig;
-    this.initializeLogger();
+    ClientLogger.initializeLogger(newGlobalConfig);
   }
 }
 
@@ -481,40 +451,13 @@ export function createEncryptionModule(
 }
 
 export function initializeEncryptionLogger(globalConfig: GlobalConfig): void {
-  logger = createLogger({
-    level: globalConfig.logLevel,
-    silent: !globalConfig.loggingEnabled,
-    format: format.combine(
-      format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-      format.errors({ stack: true }),
-      format.splat(),
-      format.json(),
-      format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
-    ),
-    defaultMeta: { service: 'encryption-service' },
-    transports: [
-      new transports.Console({
-        format: format.combine(
-          format.colorize(),
-          format.printf(({ level, message, timestamp, metadata }) => {
-            let msg = `${timestamp} [${level}]: ${message}`;
-            if (Object.keys(metadata).length > 0) {
-              msg += '\n\t' + JSON.stringify(metadata);
-            }
-            return msg;
-          }),
-        ),
-      }),
-      new transports.File({ filename: 'encryption-error.log', level: 'error' }),
-      new transports.File({ filename: 'encryption-combined.log', level: 'debug' }),
-    ],
-  });
+  ClientLogger.initializeLogger(globalConfig);
 }
 
 // Add an unhandled rejection handler
 if (typeof process !== 'undefined' && process.on) {
   process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
-    logger.error('Unhandled Rejection at:', {
+    ClientLogger.error('Unhandled Rejection at:', {
       promise,
       reason: reason instanceof Error ? reason.message : String(reason),
       stack: reason instanceof Error ? reason.stack : undefined,
@@ -525,11 +468,11 @@ if (typeof process !== 'undefined' && process.on) {
 // Add an unhandled rejection handler for browser environments
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
-    logger.error('Unhandled Rejection at:', {
+    ClientLogger.error('Unhandled Rejection at:', {
       reason: event.reason instanceof Error ? event.reason.message : String(event.reason),
       stack: event.reason instanceof Error ? event.reason.stack : undefined,
     });
   });
 }
 
-export { logger as encryptionLogger };
+export { ClientLogger as encryptionLogger };

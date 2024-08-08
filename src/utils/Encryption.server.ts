@@ -12,9 +12,7 @@ import {
   DecipherCCM,
 } from 'crypto';
 import { EncryptionConfig, EncryptedValue, GlobalConfig } from '../types';
-import { createLogger, format, transports } from 'winston';
-
-let logger: ReturnType<typeof createLogger>;
+import { ServerLogger } from './logger.server';
 
 const randomBytesAsync = promisify(randomBytes);
 const scryptAsync = promisify(scrypt);
@@ -28,47 +26,15 @@ export class ServerEncryptionModule {
   constructor(config: EncryptionConfig, globalConfig: GlobalConfig) {
     this.config = config;
     this.globalConfig = globalConfig;
-    this.initializeLogger();
-    logger.info('ServerEncryptionModule initialized', {
+    ServerLogger.info('ServerEncryptionModule initialized', {
       config: { ...config, encryptionPassword: '[REDACTED]' },
       globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
       supportedAlgorithms: SUPPORTED_ALGORITHMS,
     });
   }
 
-  private initializeLogger(): void {
-    logger = createLogger({
-      level: this.globalConfig.logLevel,
-      silent: !this.globalConfig.loggingEnabled,
-      format: format.combine(
-        format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-        format.errors({ stack: true }),
-        format.splat(),
-        format.json(),
-        format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
-      ),
-      defaultMeta: { service: 'server-encryption-service' },
-      transports: [
-        new transports.Console({
-          format: format.combine(
-            format.colorize(),
-            format.printf(({ level, message, timestamp, metadata }) => {
-              let msg = `${timestamp} [${level}]: ${message}`;
-              if (Object.keys(metadata).length > 0) {
-                msg += '\n\t' + JSON.stringify(metadata);
-              }
-              return msg;
-            }),
-          ),
-        }),
-        new transports.File({ filename: 'server-encryption-error.log', level: 'error' }),
-        new transports.File({ filename: 'server-encryption-combined.log', level: 'debug' }),
-      ],
-    });
-  }
-
   private async deriveKey(password: string, salt: Uint8Array): Promise<Buffer> {
-    logger.debug('Deriving encryption key', {
+    await ServerLogger.debug('Deriving encryption key', {
       passwordLength: password.length,
       saltLength: salt.length,
     });
@@ -81,14 +47,14 @@ export class ServerEncryptionModule {
       const endTime = process.hrtime(startTime);
       const derivationTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
 
-      logger.debug('Encryption key derived successfully', {
+      await ServerLogger.debug('Encryption key derived successfully', {
         derivationTime: `${derivationTime.toFixed(2)}ms`,
         keyLength: key.length,
       });
 
       return key;
     } catch (error) {
-      logger.error('Error deriving encryption key', {
+      await ServerLogger.error('Error deriving encryption key', {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -97,7 +63,7 @@ export class ServerEncryptionModule {
   }
 
   async encrypt(value: Uint8Array): Promise<EncryptedValue> {
-    logger.info('Starting encryption process', {
+    await ServerLogger.info('Starting encryption process', {
       valueLength: value.length,
       algorithm: this.config.algorithm,
     });
@@ -108,7 +74,7 @@ export class ServerEncryptionModule {
       const error = new Error(
         `Unsupported encryption algorithm: ${this.config.algorithm}. Supported algorithms are: ${SUPPORTED_ALGORITHMS.join(', ')}`,
       );
-      logger.error('Unsupported encryption algorithm', { error: error.message });
+      await ServerLogger.error('Unsupported encryption algorithm', { error: error.message });
       throw error;
     }
 
@@ -124,7 +90,7 @@ export class ServerEncryptionModule {
         cipher = createCipheriv(this.config.algorithm, key, iv) as CipherGCM;
       }
 
-      logger.debug('Cipher created', { algorithm: this.config.algorithm });
+      await ServerLogger.debug('Cipher created', { algorithm: this.config.algorithm });
 
       const encryptedParts: Uint8Array[] = [];
       encryptedParts.push(new Uint8Array(cipher.update(value)));
@@ -145,7 +111,7 @@ export class ServerEncryptionModule {
       const endTime = process.hrtime(startTime);
       const encryptionTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
 
-      logger.info('Encryption process completed successfully', {
+      await ServerLogger.info('Encryption process completed successfully', {
         encryptionTime: `${encryptionTime.toFixed(2)}ms`,
         inputLength: value.length,
         encryptedLength: encryptedData.length,
@@ -164,7 +130,7 @@ export class ServerEncryptionModule {
         encryptionKey: key,
       };
     } catch (error) {
-      logger.error('Error during encryption process', {
+      await ServerLogger.error('Error during encryption process', {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -173,7 +139,7 @@ export class ServerEncryptionModule {
   }
 
   async decrypt(encryptedValue: EncryptedValue): Promise<Uint8Array> {
-    logger.info('Starting decryption process', {
+    await ServerLogger.info('Starting decryption process', {
       encryptedDataLength: encryptedValue.encryptedData.length,
       algorithm: this.config.algorithm,
       ivLength: encryptedValue.iv.length,
@@ -187,7 +153,7 @@ export class ServerEncryptionModule {
       const error = new Error(
         `Unsupported decryption algorithm: ${this.config.algorithm}. Supported algorithms are: ${SUPPORTED_ALGORITHMS.join(', ')}`,
       );
-      logger.error('Unsupported decryption algorithm', { error: error.message });
+      await ServerLogger.error('Unsupported decryption algorithm', { error: error.message });
       throw error;
     }
 
@@ -195,7 +161,7 @@ export class ServerEncryptionModule {
       const { encryptedData, iv, salt, authTag } = encryptedValue;
       const key = new Uint8Array(await this.deriveKey(this.config.encryptionPassword, salt));
 
-      logger.debug('Decryption key derived', { keyLength: key.length });
+      await ServerLogger.debug('Decryption key derived', { keyLength: key.length });
 
       let decipher: DecipherGCM | DecipherCCM;
       if (this.config.algorithm === 'aes-256-gcm') {
@@ -206,13 +172,13 @@ export class ServerEncryptionModule {
         (decipher as DecipherCCM).setAuthTag(authTag);
       }
 
-      logger.debug('Decipher created', { algorithm: this.config.algorithm });
+      await ServerLogger.debug('Decipher created', { algorithm: this.config.algorithm });
 
       const decryptedParts: Uint8Array[] = [];
       decryptedParts.push(new Uint8Array(decipher.update(encryptedData)));
       decryptedParts.push(new Uint8Array(decipher.final()));
 
-      logger.debug('Decryption completed', {
+      await ServerLogger.debug('Decryption completed', {
         decryptedPartsCount: decryptedParts.length,
       });
 
@@ -228,7 +194,7 @@ export class ServerEncryptionModule {
       const endTime = process.hrtime(startTime);
       const decryptionTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
 
-      logger.info('Decryption process completed successfully', {
+      await ServerLogger.info('Decryption process completed successfully', {
         decryptionTime: `${decryptionTime.toFixed(2)}ms`,
         encryptedLength: encryptedData.length,
         decryptedLength: decryptedData.length,
@@ -240,7 +206,7 @@ export class ServerEncryptionModule {
 
       return decryptedData;
     } catch (error) {
-      logger.error('Error during decryption process', {
+      await ServerLogger.error('Error during decryption process', {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -249,7 +215,7 @@ export class ServerEncryptionModule {
   }
 
   updateConfig(newConfig: EncryptionConfig, newGlobalConfig: GlobalConfig): void {
-    logger.info('Updating ServerEncryptionModule configuration', {
+    ServerLogger.info('Updating ServerEncryptionModule configuration', {
       oldConfig: { ...this.config, encryptionPassword: '[REDACTED]' },
       newConfig: { ...newConfig, encryptionPassword: '[REDACTED]' },
       oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
@@ -257,7 +223,6 @@ export class ServerEncryptionModule {
     });
     this.config = newConfig;
     this.globalConfig = newGlobalConfig;
-    this.initializeLogger();
   }
 }
 
@@ -268,48 +233,19 @@ export function createServerEncryptionModule(
   return new ServerEncryptionModule(config, globalConfig);
 }
 
-export function initializeServerEncryptionLogger(globalConfig: GlobalConfig): void {
-  logger = createLogger({
-    level: globalConfig.logLevel,
-    silent: !globalConfig.loggingEnabled,
-    format: format.combine(
-      format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-      format.errors({ stack: true }),
-      format.splat(),
-      format.json(),
-      format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
-    ),
-    defaultMeta: { service: 'server-encryption-service' },
-    transports: [
-      new transports.Console({
-        format: format.combine(
-          format.colorize(),
-          format.printf(({ level, message, timestamp, metadata }) => {
-            let msg = `${timestamp} [${level}]: ${message}`;
-            if (Object.keys(metadata).length > 0) {
-              msg += '\n\t' + JSON.stringify(metadata);
-            }
-            return msg;
-          }),
-        ),
-      }),
-      new transports.File({ filename: 'server-encryption-error.log', level: 'error' }),
-      new transports.File({ filename: 'server-encryption-combined.log', level: 'debug' }),
-    ],
-  });
-
-  logger.info('Server Encryption module initialized', {
+export async function initializeServerEncryptionLogger(): Promise<void> {
+  await ServerLogger.info('Server Encryption module initialized', {
     supportedAlgorithms: SUPPORTED_ALGORITHMS,
   });
 }
 
 // Add an unhandled rejection handler
-process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
-  logger.error('Unhandled Rejection at:', {
+process.on('unhandledRejection', async (reason: unknown, promise: Promise<unknown>) => {
+  await ServerLogger.error('Unhandled Rejection at:', {
     promise,
     reason: reason instanceof Error ? reason.message : String(reason),
     stack: reason instanceof Error ? reason.stack : undefined,
   });
 });
 
-export { logger as serverEncryptionLogger };
+export { ServerLogger as serverEncryptionLogger };

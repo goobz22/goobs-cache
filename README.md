@@ -31,33 +31,46 @@ yarn add goobs-cache
 Here's a simple example of how to use goobs-cache:
 
 ```typescript
-import { set, get, remove } from 'goobs-cache';
+import { serverless, session, cookie, twoLayer } from 'goobs-cache';
 
 // Two-layer caching (automatically syncs between serverless and client-side)
-await set('userProfile', 'userStore', 'twoLayer', { name: 'Alice', age: 28 });
-const userProfile = await get('userProfile', 'userStore', 'twoLayer');
+await twoLayer.update('userProfile', 'userStore', { name: 'Alice', age: 28 });
+const userProfile = await twoLayer.get('userProfile', 'userStore');
 console.log(userProfile); // { name: 'Alice', age: 28 }
 
 // Serverless caching
-await set('serverData', 'dataStore', 'server', 'Hello, Serverless!');
-const serverValue = await get('serverData', 'dataStore', 'server');
+const serverlessAtom = serverless.atom('serverData', 'dataStore');
+await serverlessAtom.set('Hello, Serverless!');
+const serverValue = await serverlessAtom.get();
 console.log(serverValue); // 'Hello, Serverless!'
 
 // Client-side caching (session storage)
-await set('clientData', 'clientStore', 'client', { items: [1, 2, 3] });
-const clientValue = await get('clientData', 'clientStore', 'client');
-console.log(clientValue); // { items: [1, 2, 3] }
+const sessionAtom = session.atom('Hello, Session!');
+const [sessionValue, setSessionValue] = session.useAtom(sessionAtom);
+console.log(sessionValue); // 'Hello, Session!'
+setSessionValue('Updated Session Value');
 
 // Client-side caching (cookies)
-await set('cookieData', 'cookieStore', 'cookie', 'Hello, Cookies!');
-const cookieValue = await get('cookieData', 'cookieStore', 'cookie');
+const cookieAtom = cookie.atom('cookieData', 'cookieStore');
+await cookieAtom.set('Hello, Cookies!');
+const cookieValue = await cookieAtom.get();
 console.log(cookieValue); // 'Hello, Cookies!'
 
 // Removal
-await remove('userProfile', 'userStore', 'twoLayer');
-await remove('serverData', 'dataStore', 'server');
-await remove('clientData', 'clientStore', 'client');
-await remove('cookieData', 'cookieStore', 'cookie');
+await twoLayer.remove('userProfile', 'userStore');
+await serverlessAtom.remove();
+await cookieAtom.remove();
+
+// Clearing all caches
+await twoLayer.clear();
+await serverless.clear();
+await cookie.clear();
+
+// Updating configuration
+twoLayer.updateConfig();
+serverless.updateConfig();
+session.updateConfig();
+cookie.updateConfig();
 ```
 
 ## Advanced Features
@@ -65,27 +78,75 @@ await remove('cookieData', 'cookieStore', 'cookie');
 goobs-cache offers advanced capabilities for complex use cases:
 
 - **Two-layer caching**: Automatically synchronizes data between serverless and client-side storage, providing seamless offline capabilities and improved performance.
-- **Automatic client-side caching**: When using the 'server' mode on the client-side, data is automatically cached in session storage for faster subsequent access.
-- **Flexible storage options**: Choose between 'twoLayer', 'server', 'client', and 'cookie' modes to best suit your application's needs.
+- **Automatic client-side caching**: When using the serverless mode on the client-side, data is automatically cached in session storage for faster subsequent access.
+- **Flexible storage options**: Choose between twoLayer, serverless, session, and cookie modes to best suit your application's needs.
 
 ## Configuration
 
-Configure goobs-cache using a `.reusablestore.json` file in your project's root:
+Configure goobs-cache using a `.cache.config.ts` file in your project's root. Here's a comprehensive example:
 
-```json
-{
-  "algorithm": "aes-256-gcm",
-  "keyCheckIntervalMs": 86400000,
-  "keyRotationIntervalMs": 7776000000,
-  "compressionLevel": -1,
-  "cacheSize": 10000,
-  "cacheMaxAge": 86400000,
-  "persistenceInterval": 600000,
-  "maxMemoryUsage": 1073741824,
-  "evictionPolicy": "lru",
-  "forceReset": false,
-  "encryptionPassword": "your-secure-encryption-password-here"
-}
+```typescript
+import { CacheConfig, EvictionPolicy, LogLevel } from 'goobs-cache';
+
+const cacheConfiguration: CacheConfig = {
+  serverless: {
+    cacheSize: 10000,
+    cacheMaxAge: 86400000,
+    persistenceInterval: 600000,
+    maxMemoryUsage: 1073741824,
+    evictionPolicy: 'lru' as EvictionPolicy,
+    prefetchThreshold: 0.9,
+    forceReset: false,
+    compression: {
+      compressionLevel: -1,
+    },
+    encryption: {
+      algorithm: 'aes-256-gcm',
+      encryptionPassword: 'your-secure-encryption-password-here-serverless',
+      keyCheckIntervalMs: 86400000,
+      keyRotationIntervalMs: 7776000000,
+    },
+  },
+  session: {
+    cacheSize: 5000,
+    cacheMaxAge: 1800000,
+    evictionPolicy: 'lru' as EvictionPolicy,
+    compression: {
+      compressionLevel: -1,
+    },
+    encryption: {
+      algorithm: 'aes-256-gcm',
+      encryptionPassword: 'your-secure-encryption-password-here-session',
+      keyCheckIntervalMs: 86400000,
+      keyRotationIntervalMs: 7776000000,
+    },
+  },
+  cookie: {
+    cacheSize: 1000,
+    cacheMaxAge: 604800000,
+    maxCookieSize: 4096,
+    evictionPolicy: 'lru' as EvictionPolicy,
+    compression: {
+      compressionLevel: -1,
+    },
+    encryption: {
+      algorithm: 'aes-256-gcm',
+      encryptionPassword: 'your-secure-encryption-password-here-cookie',
+      keyCheckIntervalMs: 86400000,
+      keyRotationIntervalMs: 7776000000,
+    },
+  },
+  global: {
+    keySize: 256,
+    batchSize: 100,
+    autoTuneInterval: 3600000,
+    loggingEnabled: true,
+    logLevel: 'debug' as LogLevel,
+    logDirectory: 'logs',
+  },
+};
+
+export default cacheConfiguration;
 ```
 
 ## TypeScript Support

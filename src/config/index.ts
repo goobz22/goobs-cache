@@ -5,7 +5,7 @@ import {
   GlobalConfig,
   EvictionPolicy,
   LogLevel,
-} from './src/types';
+} from '../types';
 
 const serverlessConfig: ServerlessCacheConfig = {
   cacheSize: 10000,

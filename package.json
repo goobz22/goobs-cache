@@ -1,6 +1,6 @@
 {
   "name": "goobs-cache",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "A versatile caching and state management solution for JavaScript applications. Offers serverless, session, and cookie-based caching with support for encryption, compression, and auto-optimization. Provides a Jotai-like API for seamless integration. Handles complex data structures and enables cross-environment persistence.",
   "main": "src/index.ts",
   "types": "src/index.ts",

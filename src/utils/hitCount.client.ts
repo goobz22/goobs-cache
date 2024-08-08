@@ -1,65 +1,37 @@
 'use client';
 
-import { createLogger, format, transports, Logger } from 'winston';
 import { GlobalConfig } from '../types';
+import { ClientLogger } from './logger.client';
 
 export const HitCountModule = (function () {
-  let logger: Logger;
-
   function getCacheGetHitCountKey(identifier: string, storeName: string): string {
     const key = `${identifier}:${storeName}:getHitCount`;
-    logger.debug('Generated getHitCount key', { key, identifier, storeName });
+    ClientLogger.debug('Generated getHitCount key', { key, identifier, storeName });
     return key;
   }
 
   function getCacheSetHitCountKey(identifier: string, storeName: string): string {
     const key = `${identifier}:${storeName}:setHitCount`;
-    logger.debug('Generated setHitCount key', { key, identifier, storeName });
+    ClientLogger.debug('Generated setHitCount key', { key, identifier, storeName });
     return key;
   }
 
   function parseCacheHitCount(hitCountString: string | null): number {
     const hitCount = hitCountString ? parseInt(hitCountString, 10) : 0;
-    logger.debug('Parsed hit count', { hitCount, hitCountString });
+    ClientLogger.debug('Parsed hit count', { hitCount, hitCountString });
     return hitCount;
   }
 
   function incrementCacheHitCount(currentHitCount: number): number {
     const newHitCount = currentHitCount + 1;
-    logger.debug('Incremented hit count', { currentHitCount, newHitCount });
+    ClientLogger.debug('Incremented hit count', { currentHitCount, newHitCount });
     return newHitCount;
   }
 
   return {
     initializeLogger(globalConfig: GlobalConfig): void {
-      logger = createLogger({
-        level: globalConfig.logLevel,
-        silent: !globalConfig.loggingEnabled,
-        format: format.combine(
-          format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-          format.errors({ stack: true }),
-          format.splat(),
-          format.json(),
-          format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
-        ),
-        defaultMeta: { service: 'cache-hit-service-client' },
-        transports: [
-          new transports.Console({
-            format: format.combine(
-              format.colorize(),
-              format.printf(({ level, message, timestamp, metadata }) => {
-                return `${timestamp} [${level}]: ${message} ${Object.keys(metadata).length ? JSON.stringify(metadata) : ''}`;
-              }),
-            ),
-          }),
-        ],
-      });
-
-      logger.info('Cache hit count service client initialized');
-    },
-
-    getLogger(): Logger {
-      return logger;
+      ClientLogger.initializeLogger(globalConfig);
+      ClientLogger.info('Cache hit count service client initialized');
     },
 
     getHitCounts(
@@ -68,7 +40,7 @@ export const HitCountModule = (function () {
       storeName: string,
     ): { getHitCount: number; setHitCount: number } {
       const startTime = performance.now();
-      logger.info('Fetching hit counts', { identifier, storeName });
+      ClientLogger.info('Fetching hit counts', { identifier, storeName });
 
       const getHitCountKey = getCacheGetHitCountKey(identifier, storeName);
       const setHitCountKey = getCacheSetHitCountKey(identifier, storeName);
@@ -79,7 +51,7 @@ export const HitCountModule = (function () {
       const endTime = performance.now();
       const duration = endTime - startTime;
 
-      logger.info('Retrieved hit counts', {
+      ClientLogger.info('Retrieved hit counts', {
         identifier,
         storeName,
         getHitCount,
@@ -97,7 +69,7 @@ export const HitCountModule = (function () {
       storeName: string,
     ): number {
       const startTime = performance.now();
-      logger.info('Incrementing get hit count', { identifier, storeName });
+      ClientLogger.info('Incrementing get hit count', { identifier, storeName });
 
       const hitCountKey = getCacheGetHitCountKey(identifier, storeName);
       const currentHitCount = parseCacheHitCount(get(hitCountKey));
@@ -108,7 +80,7 @@ export const HitCountModule = (function () {
       const endTime = performance.now();
       const duration = endTime - startTime;
 
-      logger.info('Incremented get hit count', {
+      ClientLogger.info('Incremented get hit count', {
         identifier,
         storeName,
         oldHitCount: currentHitCount,
@@ -126,7 +98,7 @@ export const HitCountModule = (function () {
       storeName: string,
     ): number {
       const startTime = performance.now();
-      logger.info('Incrementing set hit count', { identifier, storeName });
+      ClientLogger.info('Incrementing set hit count', { identifier, storeName });
 
       const hitCountKey = getCacheSetHitCountKey(identifier, storeName);
       const currentHitCount = parseCacheHitCount(get(hitCountKey));
@@ -137,7 +109,7 @@ export const HitCountModule = (function () {
       const endTime = performance.now();
       const duration = endTime - startTime;
 
-      logger.info('Incremented set hit count', {
+      ClientLogger.info('Incremented set hit count', {
         identifier,
         storeName,
         oldHitCount: currentHitCount,
@@ -156,7 +128,7 @@ export const HitCountModule = (function () {
       setHitCount: number,
     ): void {
       const startTime = performance.now();
-      logger.info('Setting hit counts', { identifier, storeName, getHitCount, setHitCount });
+      ClientLogger.info('Setting hit counts', { identifier, storeName, getHitCount, setHitCount });
 
       const getHitCountKey = getCacheGetHitCountKey(identifier, storeName);
       const setHitCountKey = getCacheSetHitCountKey(identifier, storeName);
@@ -167,7 +139,7 @@ export const HitCountModule = (function () {
       const endTime = performance.now();
       const duration = endTime - startTime;
 
-      logger.info('Hit counts set successfully', {
+      ClientLogger.info('Hit counts set successfully', {
         identifier,
         storeName,
         getHitCount,
@@ -187,13 +159,10 @@ export const HitCountModule = (function () {
 // Add an unhandled rejection handler for browser environments
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
-    const logger = HitCountModule.getLogger();
-    if (logger) {
-      logger.error('Unhandled Rejection at:', {
-        reason: event.reason instanceof Error ? event.reason.message : String(event.reason),
-        stack: event.reason instanceof Error ? event.reason.stack : undefined,
-      });
-    }
+    ClientLogger.error('Unhandled Rejection at:', {
+      reason: event.reason instanceof Error ? event.reason.message : String(event.reason),
+      stack: event.reason instanceof Error ? event.reason.stack : undefined,
+    });
   });
 }
 

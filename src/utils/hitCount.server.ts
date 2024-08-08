@@ -1,6 +1,5 @@
-import { createLogger, format, transports, Logger } from 'winston';
 import { GlobalConfig } from '../types';
-import path from 'path';
+import { ServerLogger } from './logger.server';
 
 async function measureAsyncExecutionTime<T>(
   func: () => Promise<T>,
@@ -12,69 +11,34 @@ async function measureAsyncExecutionTime<T>(
 }
 
 export const ServerHitCountModule = (function () {
-  let logger: Logger;
-
   async function getCacheGetHitCountKey(identifier: string, storeName: string): Promise<string> {
     const key = `${identifier}:${storeName}:getHitCount`;
-    logger.debug('Generated getHitCount key', { key, identifier, storeName });
+    await ServerLogger.debug('Generated getHitCount key', { key, identifier, storeName });
     return key;
   }
 
   async function getCacheSetHitCountKey(identifier: string, storeName: string): Promise<string> {
     const key = `${identifier}:${storeName}:setHitCount`;
-    logger.debug('Generated setHitCount key', { key, identifier, storeName });
+    await ServerLogger.debug('Generated setHitCount key', { key, identifier, storeName });
     return key;
   }
 
   async function parseCacheHitCount(hitCountString: string | null): Promise<number> {
     const hitCount = hitCountString ? parseInt(hitCountString, 10) : 0;
-    logger.debug('Parsed hit count', { hitCount, hitCountString });
+    await ServerLogger.debug('Parsed hit count', { hitCount, hitCountString });
     return hitCount;
   }
 
   async function incrementCacheHitCount(currentHitCount: number): Promise<number> {
     const newHitCount = currentHitCount + 1;
-    logger.debug('Incremented hit count', { currentHitCount, newHitCount });
+    await ServerLogger.debug('Incremented hit count', { currentHitCount, newHitCount });
     return newHitCount;
   }
 
   return {
-    initializeLogger(globalConfig: GlobalConfig): void {
-      logger = createLogger({
-        level: globalConfig.logLevel,
-        silent: !globalConfig.loggingEnabled,
-        format: format.combine(
-          format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-          format.errors({ stack: true }),
-          format.splat(),
-          format.json(),
-          format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
-        ),
-        defaultMeta: { service: 'async-cache-hit-service' },
-        transports: [
-          new transports.Console({
-            format: format.combine(
-              format.colorize(),
-              format.printf(({ level, message, timestamp, metadata }) => {
-                return `${timestamp} [${level}]: ${message} ${Object.keys(metadata).length ? JSON.stringify(metadata) : ''}`;
-              }),
-            ),
-          }),
-          new transports.File({
-            filename: path.join(globalConfig.logDirectory, 'async-cache-hit-error.log'),
-            level: 'error',
-          }),
-          new transports.File({
-            filename: path.join(globalConfig.logDirectory, 'async-cache-hit-combined.log'),
-          }),
-        ],
-      });
-
-      logger.info('Async cache hit count service initialized');
-    },
-
-    getLogger(): Logger {
-      return logger;
+    async initializeLogger(globalConfig: GlobalConfig): Promise<void> {
+      await ServerLogger.initializeLogger(globalConfig);
+      await ServerLogger.info('Async cache hit count service initialized');
     },
 
     async getHitCounts(
@@ -84,7 +48,7 @@ export const ServerHitCountModule = (function () {
     ): Promise<{ getHitCount: number; setHitCount: number }> {
       const { result, duration } = await measureAsyncExecutionTime(async () => {
         try {
-          logger.info('Fetching hit counts', { identifier, storeName });
+          await ServerLogger.info('Fetching hit counts', { identifier, storeName });
           const getHitCountKey = await getCacheGetHitCountKey(identifier, storeName);
           const setHitCountKey = await getCacheSetHitCountKey(identifier, storeName);
 
@@ -94,7 +58,7 @@ export const ServerHitCountModule = (function () {
           ]);
 
           const result = { getHitCount, setHitCount };
-          logger.info('Retrieved hit counts', {
+          await ServerLogger.info('Retrieved hit counts', {
             identifier,
             storeName,
             getHitCount,
@@ -102,7 +66,7 @@ export const ServerHitCountModule = (function () {
           });
           return result;
         } catch (error) {
-          logger.error('Error fetching hit counts', {
+          await ServerLogger.error('Error fetching hit counts', {
             error: error instanceof Error ? error.message : String(error),
             stack: error instanceof Error ? error.stack : undefined,
             identifier,
@@ -111,7 +75,7 @@ export const ServerHitCountModule = (function () {
           throw error;
         }
       });
-      logger.info('getHitCounts execution time', { duration });
+      await ServerLogger.info('getHitCounts execution time', { duration });
       return result;
     },
 
@@ -123,14 +87,14 @@ export const ServerHitCountModule = (function () {
     ): Promise<number> {
       const { result: newHitCount, duration } = await measureAsyncExecutionTime(async () => {
         try {
-          logger.info('Incrementing get hit count', { identifier, storeName });
+          await ServerLogger.info('Incrementing get hit count', { identifier, storeName });
           const hitCountKey = await getCacheGetHitCountKey(identifier, storeName);
           const currentHitCount = await parseCacheHitCount(await get(hitCountKey));
           const newHitCount = await incrementCacheHitCount(currentHitCount);
 
           await set(hitCountKey, newHitCount.toString());
 
-          logger.info('Incremented get hit count', {
+          await ServerLogger.info('Incremented get hit count', {
             identifier,
             storeName,
             oldHitCount: currentHitCount,
@@ -138,7 +102,7 @@ export const ServerHitCountModule = (function () {
           });
           return newHitCount;
         } catch (error) {
-          logger.error('Error incrementing get hit count', {
+          await ServerLogger.error('Error incrementing get hit count', {
             error: error instanceof Error ? error.message : String(error),
             stack: error instanceof Error ? error.stack : undefined,
             identifier,
@@ -147,7 +111,7 @@ export const ServerHitCountModule = (function () {
           throw error;
         }
       });
-      logger.info('incrementGetHitCount execution time', { duration });
+      await ServerLogger.info('incrementGetHitCount execution time', { duration });
       return newHitCount;
     },
 
@@ -159,14 +123,14 @@ export const ServerHitCountModule = (function () {
     ): Promise<number> {
       const { result: newHitCount, duration } = await measureAsyncExecutionTime(async () => {
         try {
-          logger.info('Incrementing set hit count', { identifier, storeName });
+          await ServerLogger.info('Incrementing set hit count', { identifier, storeName });
           const hitCountKey = await getCacheSetHitCountKey(identifier, storeName);
           const currentHitCount = await parseCacheHitCount(await get(hitCountKey));
           const newHitCount = await incrementCacheHitCount(currentHitCount);
 
           await set(hitCountKey, newHitCount.toString());
 
-          logger.info('Incremented set hit count', {
+          await ServerLogger.info('Incremented set hit count', {
             identifier,
             storeName,
             oldHitCount: currentHitCount,
@@ -174,7 +138,7 @@ export const ServerHitCountModule = (function () {
           });
           return newHitCount;
         } catch (error) {
-          logger.error('Error incrementing set hit count', {
+          await ServerLogger.error('Error incrementing set hit count', {
             error: error instanceof Error ? error.message : String(error),
             stack: error instanceof Error ? error.stack : undefined,
             identifier,
@@ -183,7 +147,7 @@ export const ServerHitCountModule = (function () {
           throw error;
         }
       });
-      logger.info('incrementSetHitCount execution time', { duration });
+      await ServerLogger.info('incrementSetHitCount execution time', { duration });
       return newHitCount;
     },
 
@@ -195,7 +159,12 @@ export const ServerHitCountModule = (function () {
       setHitCount: number,
     ): Promise<void> {
       const { duration } = await measureAsyncExecutionTime(async () => {
-        logger.info('Setting hit counts', { identifier, storeName, getHitCount, setHitCount });
+        await ServerLogger.info('Setting hit counts', {
+          identifier,
+          storeName,
+          getHitCount,
+          setHitCount,
+        });
 
         const [getHitCountKey, setHitCountKey] = await Promise.all([
           getCacheGetHitCountKey(identifier, storeName),
@@ -207,7 +176,7 @@ export const ServerHitCountModule = (function () {
           set(setHitCountKey, setHitCount.toString()),
         ]);
 
-        logger.info('Hit counts set successfully', {
+        await ServerLogger.info('Hit counts set successfully', {
           identifier,
           storeName,
           getHitCount,
@@ -215,7 +184,9 @@ export const ServerHitCountModule = (function () {
         });
       });
 
-      logger.info('setHitCounts execution time', { duration: `${duration.toFixed(2)}ms` });
+      await ServerLogger.info('setHitCounts execution time', {
+        duration: `${duration.toFixed(2)}ms`,
+      });
     },
 
     // Expose utility functions for potential external use
@@ -226,8 +197,8 @@ export const ServerHitCountModule = (function () {
   };
 })();
 
-process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
-  ServerHitCountModule.getLogger().error('Unhandled Rejection at:', {
+process.on('unhandledRejection', async (reason: unknown, promise: Promise<unknown>) => {
+  await ServerLogger.error('Unhandled Rejection at:', {
     promise,
     reason: reason instanceof Error ? reason.message : String(reason),
     stack: reason instanceof Error ? reason.stack : undefined,

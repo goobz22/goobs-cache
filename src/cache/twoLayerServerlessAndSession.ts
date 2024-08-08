@@ -1,296 +1,323 @@
-import { createLogger, format, transports, Logger } from 'winston';
-import ServerlessCache, { createServerlessCache } from './serverless.server';
-import SessionStorageCache, { createSessionStorageCache } from './session.client';
-import {
-  ServerlessCacheConfig,
-  SessionCacheConfig,
-  CacheResult,
-  DataValue,
-  TwoLayerMode,
-  GlobalConfig,
-} from '../types';
-import path from 'path';
+import serverless from './serverless.server';
+import session from './session.client';
+import { ClientLogger } from '../utils/logger.client';
+import { CacheResult, DataValue, TwoLayerMode } from '../types';
 
-let logger: Logger;
-
-let serverlessCache: ServerlessCache | null = null;
-let sessionStorage: SessionStorageCache | null = null;
-
-const initializeLogger = (globalConfig: GlobalConfig) => {
-  logger = createLogger({
-    level: globalConfig.logLevel,
-    silent: !globalConfig.loggingEnabled,
-    format: format.combine(
-      format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-      format.errors({ stack: true }),
-      format.splat(),
-      format.json(),
-      format.metadata({ fillExcept: ['message', 'level', 'timestamp', 'label'] }),
-    ),
-    defaultMeta: { service: 'two-layer-cache' },
-    transports: [
-      new transports.Console({
-        format: format.combine(
-          format.colorize(),
-          format.printf(({ level, message, timestamp, metadata }) => {
-            let msg = `${timestamp} [${level}]: ${message}`;
-            if (Object.keys(metadata).length > 0) {
-              msg += '\n\t' + JSON.stringify(metadata);
-            }
-            return msg;
-          }),
-        ),
-      }),
-      new transports.File({
-        filename: path.join(globalConfig.logDirectory, 'two-layer-cache-error.log'),
-        level: 'error',
-      }),
-      new transports.File({
-        filename: path.join(globalConfig.logDirectory, 'two-layer-cache-combined.log'),
-      }),
-    ],
-  });
-};
-
-const initializeCaches = async (
-  serverlessConfig: ServerlessCacheConfig,
-  sessionConfig: SessionCacheConfig,
-  globalConfig: GlobalConfig,
-): Promise<void> => {
-  const startTime = process.hrtime();
-  logger.info('Initializing caches', {
-    serverlessConfig: { ...serverlessConfig, encryptionPassword: '[REDACTED]' },
-    sessionConfig: { ...sessionConfig, encryptionPassword: '[REDACTED]' },
-  });
-  if (!serverlessCache) {
-    logger.debug('Creating serverless cache');
-    serverlessCache = createServerlessCache(
-      serverlessConfig,
-      serverlessConfig.encryption.encryptionPassword,
-      globalConfig,
-    );
-    logger.info('Serverless cache created');
+class TwoLayerCache {
+  private async initializeCaches(): Promise<void> {
+    const startTime = performance.now();
+    ClientLogger.info('Initializing caches');
+    ClientLogger.info('Caches initialized');
+    const duration = performance.now() - startTime;
+    ClientLogger.debug('Caches initialized', { duration: `${duration.toFixed(2)}ms` });
   }
-  if (!sessionStorage && typeof window !== 'undefined') {
-    logger.debug('Creating session storage cache');
-    sessionStorage = createSessionStorageCache(sessionConfig, globalConfig);
-    logger.info('Session storage cache created');
-  }
-  const [seconds, nanoseconds] = process.hrtime(startTime);
-  const duration = seconds * 1000 + nanoseconds / 1e6;
-  logger.debug('Caches initialized', { duration: `${duration.toFixed(2)}ms` });
-};
 
-export async function update(
-  identifier: string,
-  storeName: string,
-  value: DataValue,
-  serverlessConfig: ServerlessCacheConfig,
-  sessionConfig: SessionCacheConfig,
-  mode: TwoLayerMode = 'both',
-  globalConfig: GlobalConfig,
-): Promise<void> {
-  const startTime = process.hrtime();
-  logger.info('Updating cache', { identifier, storeName, mode });
-  await initializeCaches(serverlessConfig, sessionConfig, globalConfig);
-  const expirationDate = new Date(Date.now() + serverlessConfig.cacheMaxAge);
-  try {
-    if (mode === 'serverless' || mode === 'both') {
-      logger.debug('Updating serverless cache', { identifier, storeName });
-      await serverlessCache!.set(identifier, storeName, value, expirationDate);
-      logger.info('Serverless cache updated', { identifier, storeName });
-    }
-    if ((mode === 'session' || mode === 'both') && typeof window !== 'undefined') {
-      logger.debug('Updating session storage', { identifier, storeName });
-      sessionStorage!.set(identifier, storeName, value, expirationDate);
-      logger.info('Session storage updated', { identifier, storeName });
-    }
-    const [seconds, nanoseconds] = process.hrtime(startTime);
-    const duration = seconds * 1000 + nanoseconds / 1e6;
-    logger.debug('Cache update completed', { duration: `${duration.toFixed(2)}ms` });
-  } catch (error) {
-    logger.error('Error updating cache', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+  private createEmptyResult(identifier: string, storeName: string): CacheResult {
+    ClientLogger.debug('Creating empty result', { identifier, storeName });
+    return {
       identifier,
       storeName,
-      mode,
-    });
-    throw error;
+      value: undefined,
+      expirationDate: new Date(0),
+      lastUpdatedDate: new Date(0),
+      lastAccessedDate: new Date(0),
+      getHitCount: 0,
+      setHitCount: 0,
+    };
   }
-}
 
-export async function get(
-  identifier: string,
-  storeName: string,
-  serverlessConfig: ServerlessCacheConfig,
-  sessionConfig: SessionCacheConfig,
-  mode: TwoLayerMode = 'both',
-  globalConfig: GlobalConfig,
-): Promise<CacheResult> {
-  const startTime = process.hrtime();
-  logger.info('Getting from cache', { identifier, storeName, mode });
-  await initializeCaches(serverlessConfig, sessionConfig, globalConfig);
-  try {
-    let result: CacheResult;
-    if (mode === 'session' && typeof window !== 'undefined') {
-      logger.debug('Getting from session storage', { identifier, storeName });
-      result = await new Promise<CacheResult>((resolve) => {
-        sessionStorage!.get(identifier, storeName, (res: CacheResult | undefined) => {
-          if (res) {
-            logger.info('Retrieved from session storage', { identifier, storeName });
-            resolve(res);
-          } else {
-            logger.info('Not found in session storage, returning empty result', {
+  async update(
+    identifier: string,
+    storeName: string,
+    value: DataValue,
+    mode: TwoLayerMode = 'both',
+  ): Promise<void> {
+    const startTime = performance.now();
+    ClientLogger.info('Updating cache', { identifier, storeName, mode });
+    await this.initializeCaches();
+    try {
+      if (mode === 'serverless' || mode === 'both') {
+        ClientLogger.debug('Updating serverless cache', { identifier, storeName });
+        const serverlessAtom = serverless.atom(identifier, storeName);
+        await serverlessAtom.set(value);
+        ClientLogger.info('Serverless cache updated', { identifier, storeName });
+      }
+      if ((mode === 'session' || mode === 'both') && typeof window !== 'undefined') {
+        ClientLogger.debug('Updating session storage', { identifier, storeName });
+        const sessionAtom = session.atom(value);
+        const [, setValue] = session.useAtom(sessionAtom);
+        setValue(value);
+        ClientLogger.info('Session storage updated', { identifier, storeName });
+      }
+      const duration = performance.now() - startTime;
+      ClientLogger.debug('Cache update completed', { duration: `${duration.toFixed(2)}ms` });
+    } catch (error) {
+      ClientLogger.error('Error updating cache', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        identifier,
+        storeName,
+        mode,
+      });
+      throw error;
+    }
+  }
+
+  async get(
+    identifier: string,
+    storeName: string,
+    mode: TwoLayerMode = 'both',
+  ): Promise<CacheResult> {
+    const startTime = performance.now();
+    ClientLogger.info('Getting from cache', { identifier, storeName, mode });
+    await this.initializeCaches();
+    try {
+      let result: CacheResult | undefined;
+      if (mode === 'session' && typeof window !== 'undefined') {
+        ClientLogger.debug('Getting from session storage', { identifier, storeName });
+        const sessionAtom = session.atom(undefined);
+        const [sessionValue] = session.useAtom(sessionAtom);
+        if (sessionValue !== undefined) {
+          const value = await sessionValue;
+          if (value !== undefined) {
+            result = {
               identifier,
               storeName,
-            });
-            resolve(createEmptyResult(identifier, storeName));
+              value,
+              expirationDate: new Date(),
+              lastUpdatedDate: new Date(),
+              lastAccessedDate: new Date(),
+              getHitCount: 1,
+              setHitCount: 0,
+            };
+            ClientLogger.info('Retrieved from session storage', { identifier, storeName });
           }
-        });
-      });
-    } else if (mode === 'serverless') {
-      logger.debug('Getting from serverless cache', { identifier, storeName });
-      result = await serverlessCache!.get(identifier, storeName);
-      logger.info('Retrieved from serverless cache', { identifier, storeName });
-    } else {
-      // mode is 'both' or we're on the server side
-      if (typeof window !== 'undefined') {
-        logger.debug('Attempting to get from session storage first', { identifier, storeName });
-        result = await new Promise<CacheResult>((resolve) => {
-          sessionStorage!.get(
-            identifier,
-            storeName,
-            async (sessionResult: CacheResult | undefined) => {
-              if (sessionResult && sessionResult.value !== undefined) {
-                logger.info('Retrieved from session storage', { identifier, storeName });
-                resolve(sessionResult);
-              } else {
-                logger.debug('Not found in session storage, trying serverless cache', {
-                  identifier,
-                  storeName,
-                });
-                const serverResult = await serverlessCache!.get(identifier, storeName);
-                if (serverResult.value !== undefined) {
-                  logger.info('Retrieved from serverless cache', { identifier, storeName });
-                  logger.debug('Updating session storage with serverless result', {
-                    identifier,
-                    storeName,
-                  });
-                  sessionStorage!.set(
-                    identifier,
-                    storeName,
-                    serverResult.value,
-                    serverResult.expirationDate,
-                  );
-                } else {
-                  logger.info('Not found in serverless cache', { identifier, storeName });
-                }
-                resolve(serverResult);
-              }
-            },
-          );
-        });
-      } else {
-        logger.debug('On server side, getting directly from serverless cache', {
+        }
+      } else if (mode === 'serverless') {
+        ClientLogger.debug('Getting from serverless cache', { identifier, storeName });
+        const serverlessAtom = serverless.atom(identifier, storeName);
+        const serverlessResult = await serverlessAtom.get();
+        if (serverlessResult) {
+          result = serverlessResult;
+          ClientLogger.info('Retrieved from serverless cache', { identifier, storeName });
+        }
+      } else if (typeof window !== 'undefined') {
+        // mode is 'both' and we're on the client side
+        ClientLogger.debug('Attempting to get from session storage first', {
           identifier,
           storeName,
         });
-        result = await serverlessCache!.get(identifier, storeName);
-        logger.info('Retrieved from serverless cache', { identifier, storeName });
+        const sessionAtom = session.atom(undefined);
+        const [sessionValue, setSessionValue] = session.useAtom(sessionAtom);
+        if (sessionValue !== undefined) {
+          const value = await sessionValue;
+          if (value !== undefined) {
+            result = {
+              identifier,
+              storeName,
+              value,
+              expirationDate: new Date(),
+              lastUpdatedDate: new Date(),
+              lastAccessedDate: new Date(),
+              getHitCount: 1,
+              setHitCount: 0,
+            };
+            ClientLogger.info('Retrieved from session storage', { identifier, storeName });
+          }
+        }
+
+        if (!result) {
+          ClientLogger.debug('Not found in session storage, trying serverless cache', {
+            identifier,
+            storeName,
+          });
+          const serverlessAtom = serverless.atom(identifier, storeName);
+          const serverlessResult = await serverlessAtom.get();
+          if (serverlessResult) {
+            result = serverlessResult;
+            ClientLogger.info('Retrieved from serverless cache', { identifier, storeName });
+            ClientLogger.debug('Updating session storage with serverless result', {
+              identifier,
+              storeName,
+            });
+            // Store the value in a way that conforms to the session atom's type constraints
+            setSessionValue(() => Promise.resolve(undefined));
+            // You may need to implement a separate mechanism to store the actual value
+            // For example, you could use localStorage or another storage method
+            localStorage.setItem(
+              `${identifier}:${storeName}`,
+              JSON.stringify(serverlessResult.value),
+            );
+          }
+        }
+      } else {
+        // mode is 'both' and we're on the server side
+        ClientLogger.debug('On server side, getting directly from serverless cache', {
+          identifier,
+          storeName,
+        });
+        const serverlessAtom = serverless.atom(identifier, storeName);
+        const serverlessResult = await serverlessAtom.get();
+        if (serverlessResult) {
+          result = serverlessResult;
+          ClientLogger.info('Retrieved from serverless cache', { identifier, storeName });
+        }
       }
+
+      if (!result) {
+        ClientLogger.info('Not found in cache, returning empty result', { identifier, storeName });
+        result = this.createEmptyResult(identifier, storeName);
+      }
+
+      const duration = performance.now() - startTime;
+      ClientLogger.debug('Cache get operation completed', {
+        duration: `${duration.toFixed(2)}ms`,
+        resultFound: result.value !== undefined,
+      });
+      return result;
+    } catch (error) {
+      ClientLogger.error('Error getting from cache', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        identifier,
+        storeName,
+        mode,
+      });
+      throw error;
     }
-    const [seconds, nanoseconds] = process.hrtime(startTime);
-    const duration = seconds * 1000 + nanoseconds / 1e6;
-    logger.debug('Cache get operation completed', {
-      duration: `${duration.toFixed(2)}ms`,
-      resultFound: result.value !== undefined,
-    });
-    return result;
-  } catch (error) {
-    logger.error('Error getting from cache', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      identifier,
-      storeName,
-      mode,
-    });
-    throw error;
+  }
+
+  async remove(identifier: string, storeName: string, mode: TwoLayerMode = 'both'): Promise<void> {
+    const startTime = performance.now();
+    ClientLogger.info('Removing from cache', { identifier, storeName, mode });
+    await this.initializeCaches();
+    try {
+      if (mode === 'serverless' || mode === 'both') {
+        ClientLogger.debug('Removing from serverless cache', { identifier, storeName });
+        const serverlessAtom = serverless.atom(identifier, storeName);
+        await serverlessAtom.remove();
+        ClientLogger.info('Removed from serverless cache', { identifier, storeName });
+      }
+      if ((mode === 'session' || mode === 'both') && typeof window !== 'undefined') {
+        ClientLogger.debug('Removing from session storage', { identifier, storeName });
+        const sessionAtom = session.atom(undefined);
+        const [, setSessionValue] = session.useAtom(sessionAtom);
+
+        // Remove the value from the session atom
+        setSessionValue(() => Promise.resolve(undefined));
+
+        // Remove the value from localStorage
+        localStorage.removeItem(`${identifier}:${storeName}`);
+
+        ClientLogger.info('Removed from session storage', { identifier, storeName });
+      }
+      const duration = performance.now() - startTime;
+      ClientLogger.debug('Cache remove operation completed', {
+        duration: `${duration.toFixed(2)}ms`,
+      });
+    } catch (error) {
+      ClientLogger.error('Error removing from cache', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        identifier,
+        storeName,
+        mode,
+      });
+      throw error;
+    }
+  }
+
+  async clear(mode: TwoLayerMode = 'both'): Promise<void> {
+    const startTime = performance.now();
+    ClientLogger.info('Clearing cache', { mode });
+    await this.initializeCaches();
+    try {
+      if (mode === 'serverless' || mode === 'both') {
+        ClientLogger.debug('Clearing serverless cache');
+        await serverless.clear();
+        ClientLogger.info('Serverless cache cleared');
+      }
+      if ((mode === 'session' || mode === 'both') && typeof window !== 'undefined') {
+        ClientLogger.debug('Clearing session storage');
+
+        // Clear session atoms
+        const sessionAtom = session.atom(undefined);
+        const [, setSessionValue] = session.useAtom(sessionAtom);
+        setSessionValue(() => Promise.resolve(undefined));
+
+        // Clear localStorage items related to our cache
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.includes(':')) {
+            // Assuming our keys contain ':'
+            localStorage.removeItem(key);
+          }
+        }
+
+        ClientLogger.info('Session storage cleared');
+      }
+      const duration = performance.now() - startTime;
+      ClientLogger.debug('Cache clear operation completed', {
+        duration: `${duration.toFixed(2)}ms`,
+      });
+    } catch (error) {
+      ClientLogger.error('Error clearing cache', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        mode,
+      });
+      throw error;
+    }
+  }
+
+  async updateConfig(): Promise<void> {
+    const startTime = performance.now();
+    ClientLogger.info('Updating cache configuration');
+    try {
+      await serverless.updateConfig();
+      ClientLogger.info('Serverless cache configuration updated');
+
+      if (typeof window !== 'undefined') {
+        // Reinitialize session atom
+        const sessionAtom = session.atom(undefined);
+        const [, setSessionValue] = session.useAtom(sessionAtom);
+        setSessionValue(() => Promise.resolve(undefined));
+        ClientLogger.info('Session storage configuration updated');
+      }
+
+      const duration = performance.now() - startTime;
+      ClientLogger.debug('Cache configuration update completed', {
+        duration: `${duration.toFixed(2)}ms`,
+      });
+    } catch (error) {
+      ClientLogger.error('Error updating cache configuration', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    }
   }
 }
 
-export async function remove(
-  identifier: string,
-  storeName: string,
-  serverlessConfig: ServerlessCacheConfig,
-  sessionConfig: SessionCacheConfig,
-  mode: TwoLayerMode = 'both',
-  globalConfig: GlobalConfig,
-): Promise<void> {
-  const startTime = process.hrtime();
-  logger.info('Removing from cache', { identifier, storeName, mode });
-  await initializeCaches(serverlessConfig, sessionConfig, globalConfig);
-  try {
-    if (mode === 'serverless' || mode === 'both') {
-      logger.debug('Removing from serverless cache', { identifier, storeName });
-      await serverlessCache!.remove(identifier, storeName);
-      logger.info('Removed from serverless cache', { identifier, storeName });
-    }
-    if ((mode === 'session' || mode === 'both') && typeof window !== 'undefined') {
-      logger.debug('Removing from session storage', { identifier, storeName });
-      sessionStorage!.remove(identifier, storeName);
-      logger.info('Removed from session storage', { identifier, storeName });
-    }
-    const [seconds, nanoseconds] = process.hrtime(startTime);
-    const duration = seconds * 1000 + nanoseconds / 1e6;
-    logger.debug('Cache remove operation completed', { duration: `${duration.toFixed(2)}ms` });
-  } catch (error) {
-    logger.error('Error removing from cache', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      identifier,
-      storeName,
-      mode,
+export const twoLayer = new TwoLayerCache();
+
+if (typeof process !== 'undefined' && process.on) {
+  process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+    ClientLogger.error('Unhandled Rejection at:', {
+      promise,
+      reason: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
     });
-    throw error;
-  }
-}
-
-function createEmptyResult(identifier: string, storeName: string): CacheResult {
-  logger.debug('Creating empty result', { identifier, storeName });
-  return {
-    identifier,
-    storeName,
-    value: undefined,
-    expirationDate: new Date(0),
-    lastUpdatedDate: new Date(0),
-    lastAccessedDate: new Date(0),
-    getHitCount: 0,
-    setHitCount: 0,
-  };
-}
-
-export function initializeTwoLayerModule(
-  serverlessConfig: ServerlessCacheConfig,
-  sessionConfig: SessionCacheConfig,
-  globalConfig: GlobalConfig,
-): void {
-  initializeLogger(globalConfig);
-  logger.info('Two-layer cache module initialized', {
-    serverlessConfig: { ...serverlessConfig, encryptionPassword: '[REDACTED]' },
-    sessionConfig: { ...sessionConfig, encryptionPassword: '[REDACTED]' },
-    globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
   });
-  void initializeCaches(serverlessConfig, sessionConfig, globalConfig);
 }
 
-// Add an unhandled rejection handler
-process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
-  logger.error('Unhandled Rejection at:', {
-    promise,
-    reason: reason instanceof Error ? reason.message : String(reason),
-    stack: reason instanceof Error ? reason.stack : undefined,
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+    ClientLogger.error('Unhandled Rejection at:', {
+      reason: event.reason instanceof Error ? event.reason.message : String(event.reason),
+      stack: event.reason instanceof Error ? event.reason.stack : undefined,
+    });
   });
-});
+}
 
-export { logger as twoLayerLogger };
+export default twoLayer;

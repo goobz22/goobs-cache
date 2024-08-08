@@ -13,12 +13,8 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "typeRoots": ["node_modules/@types"],
-    "noEmit": true,
-    "baseUrl": ".",
-    "paths": {
-      "cache.config": ["./cache.config.ts"]
-    }
+    "noEmit": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "cache.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["node_modules"]
 }

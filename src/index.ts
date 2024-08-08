@@ -1,4 +1,7 @@
-import { get, set, remove } from './goobs-cache/reusableStore';
+import cookie from './cache/cookie.client';
+import serverless from './cache/serverless.server';
+import session from './cache/session.client';
+import twoLayer from './cache/twoLayerServerlessAndSession';
 import {
   ComplexValue,
   CacheResult,
@@ -33,7 +36,7 @@ import {
   TwoLayerMode,
 } from './types';
 
-export { get, set, remove };
+export { cookie, serverless, session, twoLayer };
 
 export type {
   ComplexValue,

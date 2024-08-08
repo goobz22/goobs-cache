@@ -157,8 +157,10 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export default {
+const SessionClientModule = {
   atom,
   useAtom,
   updateConfig,
 };
+
+export default SessionClientModule;

@@ -166,13 +166,6 @@ export interface GlobalConfig {
   logDirectory: string;
 }
 
-export interface CacheConfig {
-  serverless: ServerlessCacheConfig;
-  session: SessionCacheConfig;
-  cookie: CookieCacheConfig;
-  global: GlobalConfig;
-}
-
 export type IndividualCacheConfig = ServerlessCacheConfig | SessionCacheConfig | CookieCacheConfig;
 
 export type CacheMode = 'serverless' | 'session' | 'cookie' | 'twoLayer';

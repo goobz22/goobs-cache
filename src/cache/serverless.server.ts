@@ -13,7 +13,7 @@ import {
 import ServerHitCountModule from '../utils/hitCount.server';
 import ServerLastDateModule from '../utils/lastDate.server';
 import ServerConfigModule from '../utils/loadConfig.server';
-import { ServerLogger } from '../utils/logger.server';
+import { ServerLogger } from 'goobs-testing';
 import { createServerCompressionModule } from '../utils/compression.server';
 import { createServerEncryptionModule } from '../utils/encryption.server';
 

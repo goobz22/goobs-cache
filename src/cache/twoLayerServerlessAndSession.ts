@@ -1,6 +1,6 @@
 import serverless from './serverless.server';
 import session from './session.client';
-import { ClientLogger } from '../utils/logger.client';
+import { ClientLogger } from 'goobs-testing';
 import { CacheResult, DataValue, TwoLayerMode } from '../types';
 
 class TwoLayerCache {

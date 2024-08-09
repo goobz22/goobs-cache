@@ -1,7 +1,7 @@
 'use client';
 
 import { DataValue, CacheResult } from '../types';
-import { ClientLogger } from '../utils/logger.client';
+import { ClientLogger } from 'goobs-testing';
 import CookieUtils, { updateConfig as updateCookieConfig } from '../utils/cookie.client';
 
 let cookieCache: CookieCache | null = null;

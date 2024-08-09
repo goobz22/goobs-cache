@@ -1,7 +1,7 @@
 'use client';
 
 import { atom as createAtom, useAtom as useVanillaAtom } from '../utils/session.client';
-import { ClientLogger } from '../utils/logger.client';
+import { ClientLogger } from 'goobs-testing';
 
 /**
  * Creates a new atom for session storage.

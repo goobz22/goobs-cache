@@ -12,7 +12,7 @@ import {
   DecipherCCM,
 } from 'crypto';
 import { EncryptionConfig, EncryptedValue, GlobalConfig } from '../types';
-import { ServerLogger } from './logger.server';
+import { ServerLogger } from 'goobs-testing';
 
 const randomBytesAsync = promisify(randomBytes);
 const scryptAsync = promisify(scrypt);

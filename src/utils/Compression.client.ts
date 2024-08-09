@@ -1,7 +1,7 @@
 'use client';
 import { compress, decompress } from 'lz4js';
 import { CompressionConfig, GlobalConfig } from '../types';
-import { ClientLogger } from './logger.client';
+import { ClientLogger } from 'goobs-testing';
 
 export class CompressionModule {
   private config: CompressionConfig;

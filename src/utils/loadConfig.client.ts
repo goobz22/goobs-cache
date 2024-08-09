@@ -1,6 +1,6 @@
 import { SessionCacheConfig, CookieCacheConfig, GlobalConfig } from '../types';
 import { sessionConfig, cookieConfig, globalConfig } from '../config';
-import { ClientLogger } from './logger.client';
+import { ClientLogger } from 'goobs-testing';
 
 type ClientCacheConfig = {
   session: SessionCacheConfig;

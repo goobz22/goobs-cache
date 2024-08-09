@@ -1,7 +1,7 @@
 'use client';
 
 import { GlobalConfig } from '../types';
-import { ClientLogger } from './logger.client';
+import { ClientLogger } from 'goobs-testing';
 
 export const HitCountModule = (function () {
   function getCacheGetHitCountKey(identifier: string, storeName: string): string {

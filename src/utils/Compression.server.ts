@@ -2,7 +2,7 @@
 import { gzip, gunzip } from 'zlib';
 import { promisify } from 'util';
 import { CompressionConfig, GlobalConfig } from '../types';
-import { ServerLogger } from './logger.server';
+import { ServerLogger } from 'goobs-testing';
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);

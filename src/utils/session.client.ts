@@ -2,7 +2,7 @@
 
 import { useAtom as jotaiUseAtom } from 'jotai';
 import { atomWithStorage } from 'jotai/utils';
-import { ClientLogger } from './logger.client';
+import { ClientLogger } from 'goobs-testing';
 import { GlobalConfig, SessionCacheConfig } from '../types';
 import ClientConfigModule from './loadConfig.client';
 import {

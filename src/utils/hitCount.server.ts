@@ -1,5 +1,5 @@
 import { GlobalConfig } from '../types';
-import { ServerLogger } from './logger.server';
+import { ServerLogger } from 'goobs-testing';
 
 async function measureAsyncExecutionTime<T>(
   func: () => Promise<T>,

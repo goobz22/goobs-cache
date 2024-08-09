@@ -1,7 +1,7 @@
 'use client';
 
 import { GlobalConfig } from '../types';
-import { ClientLogger } from './logger.client';
+import { ClientLogger } from 'goobs-testing';
 
 function measureExecutionTime<T>(func: () => T): { result: T; duration: number } {
   const start = performance.now();

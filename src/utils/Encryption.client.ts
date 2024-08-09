@@ -12,7 +12,7 @@ import {
   pbkdf2,
 } from 'crypto';
 import { EncryptionConfig, EncryptedValue, GlobalConfig } from '../types';
-import { ClientLogger } from './logger.client';
+import { ClientLogger } from 'goobs-testing';
 
 const isBrowser = typeof window !== 'undefined' && 'crypto' in window;
 

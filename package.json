@@ -1,6 +1,6 @@
 {
   "name": "goobs-cache",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "A versatile caching and state management solution for JavaScript applications. Offers serverless, session, and cookie-based caching with support for encryption, compression, and auto-optimization. Provides a Jotai-like API for seamless integration. Handles complex data structures and enables cross-environment persistence.",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -34,7 +34,7 @@
   "dependencies": {
     "@types/lz4js": "^0.2.1",
     "@types/react": "^18.3.3",
-    "goobs-testing": "^0.1.1",
+    "goobs-testing": "^0.1.2",
     "jotai": "^2.9.2",
     "lru-cache": "^10.3.0",
     "lz4js": "^0.2.0",

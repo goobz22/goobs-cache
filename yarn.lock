@@ -2344,12 +2344,13 @@ globby@^11.1.0:
     merge2 "^1.4.1"
     slash "^3.0.0"
 
-goobs-testing@^0.1.1:
-  version "0.1.1"
-  resolved "https://registry.yarnpkg.com/goobs-testing/-/goobs-testing-0.1.1.tgz#cb7fc493023be81d952b94402cf72a11aabe7d39"
-  integrity sha512-IDxGN/+sBwJZ/evC3C9kRgf5EI7sOtSyj6BLqe66wLYtofxfZMN5E2NDUozFgwRiUcMYwg1116umtFvAbi/zEA==
+goobs-testing@^0.1.2:
+  version "0.1.2"
+  resolved "https://registry.yarnpkg.com/goobs-testing/-/goobs-testing-0.1.2.tgz#104427f3ba20edd81886477a898a727d808b0ca4"
+  integrity sha512-Xw3N+e5KuMvfsK2k14JwXUxjYd70dpcuZYlfAoZlbYDAyQ/NqDgI0PoOFaiRvSSOeUCwS4NpPscLC7tMM3E3Cw==
   dependencies:
     react "^18.3.1"
+    winston "^3.14.1"
 
 gopd@^1.0.1:
   version "1.0.1"
@@ -4029,6 +4030,7 @@ string-length@^4.0.1:
     strip-ansi "^6.0.0"
 
 "string-width-cjs@npm:string-width@^4.2.0", string-width@^4.1.0, string-width@^4.2.0, string-width@^4.2.3:
+  name string-width-cjs
   version "4.2.3"
   resolved "https://registry.yarnpkg.com/string-width/-/string-width-4.2.3.tgz#269c7117d27b05ad2e536830a8ec895ef9c6d010"
   integrity sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==
@@ -4481,12 +4483,30 @@ winston@^3.13.1:
     triple-beam "^1.3.0"
     winston-transport "^4.7.0"
 
+winston@^3.14.1:
+  version "3.14.1"
+  resolved "https://registry.yarnpkg.com/winston/-/winston-3.14.1.tgz#b296f2756e6b46d3b6faac5660d2af878fc3f666"
+  integrity sha512-CJi4Il/msz8HkdDfXOMu+r5Au/oyEjFiOZzbX2d23hRLY0narGjqfE5lFlrT5hfYJhPtM8b85/GNFsxIML/RVA==
+  dependencies:
+    "@colors/colors" "^1.6.0"
+    "@dabh/diagnostics" "^2.0.2"
+    async "^3.2.3"
+    is-stream "^2.0.0"
+    logform "^2.6.0"
+    one-time "^1.0.0"
+    readable-stream "^3.4.0"
+    safe-stable-stringify "^2.3.1"
+    stack-trace "0.0.x"
+    triple-beam "^1.3.0"
+    winston-transport "^4.7.0"
+
 word-wrap@^1.2.5:
   version "1.2.5"
   resolved "https://registry.yarnpkg.com/word-wrap/-/word-wrap-1.2.5.tgz#d2c45c6dd4fbce621a66f136cbe328afd0410b34"
   integrity sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==
 
 "wrap-ansi-cjs@npm:wrap-ansi@^7.0.0", wrap-ansi@^7.0.0:
+  name wrap-ansi-cjs
   version "7.0.0"
   resolved "https://registry.yarnpkg.com/wrap-ansi/-/wrap-ansi-7.0.0.tgz#67e145cff510a6a6984bdf1152911d69d2eb9e43"
   integrity sha512-YVGIj2kamLSTxw6NsZjoBxfSwsn0ycdesmc4p+Q21c5zPuZ1pl+NfxVdxPtdHvmNVOQ6XSYG4AUtyt/Fi7D16Q==

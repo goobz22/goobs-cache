@@ -1,123 +1,160 @@
 'use client';
+
 import { compress, decompress } from 'lz4js';
-import { CompressionConfig, GlobalConfig } from '../types';
+import { GlobalConfig } from '../types';
 import { ClientLogger } from 'goobs-testing';
 
-export class CompressionModule {
-  private config: CompressionConfig;
-  private globalConfig: GlobalConfig;
+export const ClientCompressionModule = {
+  globalConfig: {
+    keySize: 256,
+    batchSize: 100,
+    autoTuneInterval: 3600000,
+    loggingEnabled: true,
+    logLevel: 'debug',
+    logDirectory: 'logs',
+  } as GlobalConfig,
 
-  constructor(config: CompressionConfig, globalConfig: GlobalConfig) {
-    this.config = config;
-    this.globalConfig = globalConfig;
-    ClientLogger.initializeLogger(globalConfig);
-    ClientLogger.info('CompressionModule initialized', {
-      config: { ...config },
-      globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
+  compressData(data: Uint8Array | string): { data: Uint8Array; compressed: boolean } | null {
+    ClientLogger.debug('compressData called', {
+      inputType: typeof data,
+      inputLength: typeof data === 'string' ? data.length : data.byteLength,
     });
-  }
 
-  compressData(data: Uint8Array | string): Uint8Array {
     let inputData: Uint8Array;
     if (typeof data === 'string') {
-      ClientLogger.debug('Input data is a string, encoding to Uint8Array', {
-        dataType: 'string',
-        dataLength: data.length,
-      });
       inputData = new TextEncoder().encode(data);
-    } else if (data instanceof Uint8Array) {
-      ClientLogger.debug('Input data is a Uint8Array', {
-        dataType: 'Uint8Array',
-        dataLength: data.length,
+      ClientLogger.debug('String encoded to Uint8Array', {
+        originalLength: data.length,
+        encodedLength: inputData.length,
       });
+    } else if (data instanceof Uint8Array) {
       inputData = data;
     } else {
-      const errorMessage = 'Input must be a Uint8Array or string';
-      ClientLogger.error(errorMessage, { inputType: typeof data });
-      throw new Error(errorMessage);
+      ClientLogger.error('Invalid input type', { inputType: typeof data });
+      return null;
     }
 
     if (inputData.length === 0) {
-      ClientLogger.warn('Input data is empty, returning empty Uint8Array');
-      return new Uint8Array(0);
+      ClientLogger.warn('Input data is empty, returning null');
+      return null;
+    }
+
+    // Define a threshold below which we won't attempt compression
+    const COMPRESSION_THRESHOLD = 100; // bytes
+
+    if (inputData.length < COMPRESSION_THRESHOLD) {
+      ClientLogger.debug('Input data below compression threshold, returning uncompressed', {
+        inputLength: inputData.length,
+        threshold: COMPRESSION_THRESHOLD,
+      });
+      return { data: inputData, compressed: false };
     }
 
     try {
-      ClientLogger.info('Compressing data', {
-        inputLength: inputData.length,
-        compressionLevel: this.config.compressionLevel,
-      });
+      ClientLogger.info('Attempting compression', { inputLength: inputData.length });
+      const compressedData = compress(inputData);
 
-      const startTime = performance.now();
-      const compressionLevel =
-        typeof this.config.compressionLevel === 'number'
-          ? this.config.compressionLevel
-          : this.config.compressionLevel.level;
-      const compressedData = compress(inputData, compressionLevel);
-      const endTime = performance.now();
-      const compressionTime = endTime - startTime;
-
-      if (compressedData.length === 0) {
-        const errorMessage = 'Compression resulted in empty data';
-        ClientLogger.error(errorMessage, { inputLength: inputData.length });
-        throw new Error(errorMessage);
+      if (
+        !compressedData ||
+        compressedData.length === 0 ||
+        compressedData.length >= inputData.length
+      ) {
+        ClientLogger.warn('Compression ineffective, returning original data', {
+          inputLength: inputData.length,
+          compressedLength: compressedData ? compressedData.length : 0,
+        });
+        return { data: inputData, compressed: false };
       }
 
-      const compressionRatio = (compressedData.length / inputData.length) * 100;
       ClientLogger.info('Compression successful', {
         inputLength: inputData.length,
         compressedLength: compressedData.length,
-        compressionRatio: `${compressionRatio.toFixed(2)}%`,
-        compressionTime: `${compressionTime.toFixed(2)}ms`,
+        compressionRatio: `${((compressedData.length / inputData.length) * 100).toFixed(2)}%`,
       });
 
-      return compressedData;
+      return { data: compressedData, compressed: true };
     } catch (error) {
-      const errorMessage =
-        'Compression failed: ' + (error instanceof Error ? error.message : String(error));
-      ClientLogger.error(errorMessage, {
-        error,
+      ClientLogger.warn('Compression failed, returning original data', {
+        error: error instanceof Error ? error.message : String(error),
         inputLength: inputData.length,
       });
-      throw new Error(errorMessage);
+      return { data: inputData, compressed: false };
     }
-  }
+  },
 
   decompressData(
     compressedData: Uint8Array,
     outputFormat: 'uint8array' | 'string' = 'uint8array',
-  ): Uint8Array | string {
+  ): Uint8Array | string | null {
+    ClientLogger.debug('decompressData called', {
+      inputType: typeof compressedData,
+      inputLength: compressedData.length,
+      outputFormat,
+      inputSample: Array.from(compressedData.slice(0, 20)).join(','),
+    });
+
     if (!(compressedData instanceof Uint8Array)) {
       const errorMessage = 'Input must be a Uint8Array';
-      ClientLogger.error(errorMessage, { inputType: typeof compressedData });
-      throw new Error(errorMessage);
+      ClientLogger.error(errorMessage, {
+        inputType: typeof compressedData,
+      });
+      return null;
     }
 
     if (compressedData.length === 0) {
-      ClientLogger.warn('Compressed data is empty, returning empty result', { outputFormat });
-      return outputFormat === 'string' ? '' : new Uint8Array(0);
+      ClientLogger.warn('Compressed data is empty, returning null');
+      return null;
     }
 
     try {
-      ClientLogger.info('Decompressing data', {
+      ClientLogger.info('Starting decompression', {
         compressedLength: compressedData.length,
         outputFormat,
+        compressedDataSample: Array.from(compressedData.slice(0, 20)).join(','),
       });
 
       const startTime = performance.now();
-      const decompressedData = decompress(compressedData);
+
+      let decompressedData: Uint8Array;
+      try {
+        ClientLogger.debug('Calling lz4js decompress function', {
+          inputLength: compressedData.length,
+          inputSample: Array.from(compressedData.slice(0, 20)).join(','),
+        });
+        decompressedData = decompress(compressedData);
+        ClientLogger.debug('Decompression function called successfully', {
+          decompressedLength: decompressedData.length,
+          decompressedSample: Array.from(decompressedData.slice(0, 20)).join(','),
+        });
+      } catch (decompressError) {
+        ClientLogger.error('Error during lz4js decompress function', {
+          error:
+            decompressError instanceof Error ? decompressError.message : String(decompressError),
+          stack: decompressError instanceof Error ? decompressError.stack : undefined,
+          compressedLength: compressedData.length,
+          compressedSample: Array.from(compressedData.slice(0, 50)).join(','),
+        });
+        return null;
+      }
+
       const endTime = performance.now();
       const decompressionTime = endTime - startTime;
 
-      if (decompressedData.length === 0) {
+      if (!decompressedData || decompressedData.length === 0) {
         const errorMessage = 'Decompression resulted in empty data';
-        ClientLogger.error(errorMessage, { compressedLength: compressedData.length });
-        throw new Error(errorMessage);
+        ClientLogger.error(errorMessage, {
+          compressedLength: compressedData.length,
+          decompressedDataType: typeof decompressedData,
+          decompressedDataLength: decompressedData ? decompressedData.length : 'undefined',
+          compressedSample: Array.from(compressedData.slice(0, 50)).join(','),
+        });
+        return null;
       }
 
       if (outputFormat === 'string') {
         ClientLogger.debug('Converting decompressed data to string', {
           decompressedLength: decompressedData.length,
+          decompressedSample: Array.from(decompressedData.slice(0, 20)).join(','),
         });
         const result = new TextDecoder().decode(decompressedData);
         ClientLogger.info('Decompression successful', {
@@ -126,6 +163,7 @@ export class CompressionModule {
           outputLength: result.length,
           outputFormat: 'string',
           decompressionTime: `${decompressionTime.toFixed(2)}ms`,
+          resultSample: result.slice(0, 50),
         });
 
         return result;
@@ -136,6 +174,7 @@ export class CompressionModule {
         decompressedLength: decompressedData.length,
         outputFormat: 'uint8array',
         decompressionTime: `${decompressionTime.toFixed(2)}ms`,
+        decompressedDataSample: Array.from(decompressedData.slice(0, 20)).join(','),
       });
 
       return decompressedData;
@@ -145,34 +184,15 @@ export class CompressionModule {
       ClientLogger.error(errorMessage, {
         error,
         compressedLength: compressedData.length,
+        compressedDataSample: Array.from(compressedData.slice(0, 50)).join(','),
       });
-      throw new Error(errorMessage);
+      return null;
     }
-  }
+  },
+};
 
-  updateConfig(newConfig: CompressionConfig, newGlobalConfig: GlobalConfig): void {
-    ClientLogger.info('Updating CompressionModule configuration', {
-      oldConfig: { ...this.config },
-      newConfig: { ...newConfig },
-      oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
-      newGlobalConfig: { ...newGlobalConfig, encryptionPassword: '[REDACTED]' },
-    });
-    this.config = newConfig;
-    this.globalConfig = newGlobalConfig;
-    ClientLogger.initializeLogger(newGlobalConfig);
-  }
-}
-
-export function createCompressionModule(
-  config: CompressionConfig,
-  globalConfig: GlobalConfig,
-): CompressionModule {
-  return new CompressionModule(config, globalConfig);
-}
-
-export function initializeCompressionLogger(globalConfig: GlobalConfig): void {
-  ClientLogger.initializeLogger(globalConfig);
-}
+// Initialize ClientLogger
+ClientLogger.initializeLogger(ClientCompressionModule.globalConfig);
 
 // Add an unhandled rejection handler for browser environments
 if (typeof window !== 'undefined') {
@@ -184,4 +204,4 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export { ClientLogger as compressionLogger };
+export default ClientCompressionModule;

@@ -1,36 +1,27 @@
 'use server';
+
 import { gzip, gunzip } from 'zlib';
 import { promisify } from 'util';
-import { CompressionConfig, GlobalConfig } from '../types';
+import { GlobalConfig } from '../types';
 import { ServerLogger } from 'goobs-testing';
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 
-export class ServerCompressionModule {
-  private config: CompressionConfig;
-  private globalConfig: GlobalConfig;
+export const ServerCompressionModule = {
+  globalConfig: {
+    keySize: 256,
+    batchSize: 100,
+    autoTuneInterval: 3600000,
+    loggingEnabled: true,
+    logLevel: 'debug',
+    logDirectory: 'logs',
+  } as GlobalConfig,
 
-  constructor(config: CompressionConfig, globalConfig: GlobalConfig) {
-    this.config = config;
-    this.globalConfig = globalConfig;
-    ServerLogger.info('ServerCompressionModule initialized', {
-      config: { ...config },
-      globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
-    });
-  }
-
-  /**
-   * Compresses the provided data using gzip compression.
-   *
-   * @param data The data to be compressed, as a string.
-   * @returns A Promise that resolves to the compressed data as a Buffer.
-   * @throws An error if the compression fails.
-   */
   async compressData(data: string): Promise<Buffer> {
     await ServerLogger.info('Starting data compression', {
       dataLength: data.length,
-      compressionLevel: this.config.compressionLevel,
+      compressionLevel: -1,
     });
 
     try {
@@ -40,10 +31,7 @@ export class ServerCompressionModule {
       });
 
       const startTime = process.hrtime();
-      const compressionLevel =
-        typeof this.config.compressionLevel === 'number'
-          ? this.config.compressionLevel
-          : this.config.compressionLevel.level;
+      const compressionLevel = -1;
       const compressedData = await gzipAsync(inputBuffer, { level: compressionLevel });
       const endTime = process.hrtime(startTime);
       const compressionTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
@@ -64,15 +52,8 @@ export class ServerCompressionModule {
       });
       throw error;
     }
-  }
+  },
 
-  /**
-   * Decompresses the provided compressed data using gzip decompression.
-   *
-   * @param compressedData The compressed data to be decompressed, as a Buffer.
-   * @returns A Promise that resolves to the decompressed data as a string.
-   * @throws An error if the decompression fails.
-   */
   async decompressData(compressedData: Buffer): Promise<string> {
     await ServerLogger.info('Starting data decompression', {
       compressedLength: compressedData.length,
@@ -100,32 +81,11 @@ export class ServerCompressionModule {
       });
       throw error;
     }
-  }
+  },
+};
 
-  updateConfig(newConfig: CompressionConfig, newGlobalConfig: GlobalConfig): void {
-    ServerLogger.info('Updating ServerCompressionModule configuration', {
-      oldConfig: { ...this.config },
-      newConfig: { ...newConfig },
-      oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
-      newGlobalConfig: { ...newGlobalConfig, encryptionPassword: '[REDACTED]' },
-    });
-    this.config = newConfig;
-    this.globalConfig = newGlobalConfig;
-  }
-}
-
-export function createServerCompressionModule(
-  config: CompressionConfig,
-  globalConfig: GlobalConfig,
-): ServerCompressionModule {
-  return new ServerCompressionModule(config, globalConfig);
-}
-
-export async function initializeServerCompressionLogger(): Promise<void> {
-  await ServerLogger.info('Server-side Compression module initialized', {
-    nodeEnvironment: process.env.NODE_ENV,
-  });
-}
+// Initialize ServerLogger
+ServerLogger.initializeLogger(ServerCompressionModule.globalConfig);
 
 // Add an unhandled rejection handler
 process.on('unhandledRejection', async (reason: unknown, promise: Promise<unknown>) => {
@@ -136,4 +96,4 @@ process.on('unhandledRejection', async (reason: unknown, promise: Promise<unknow
   });
 });
 
-export { ServerLogger as serverCompressionLogger };
+export default ServerCompressionModule;

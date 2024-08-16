@@ -1,4 +1,4 @@
-export default {
+const config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
@@ -11,3 +11,5 @@ export default {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
 };
+
+export default config;

@@ -164,6 +164,7 @@ export interface GlobalConfig {
   loggingEnabled: boolean;
   logLevel: LogLevel;
   logDirectory: string;
+  initialize: (config: Partial<GlobalConfig>) => void;
 }
 
 export type IndividualCacheConfig = ServerlessCacheConfig | SessionCacheConfig | CookieCacheConfig;

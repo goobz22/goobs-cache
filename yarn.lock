@@ -2368,6 +2368,18 @@ globby@^11.1.0:
     merge2 "^1.4.1"
     slash "^3.0.0"
 
+goobs-encryption@^0.1.0:
+  version "0.1.0"
+  resolved "https://registry.yarnpkg.com/goobs-encryption/-/goobs-encryption-0.1.0.tgz#22a767b7ebdfe53851d584caf57e6c079d7d4a70"
+  integrity sha512-qG2VPuQS8iGtwEAGmqMt4hTkcH5KzaIqP2rgXkGXAQ5sdZnAC5tSncFIrGKOlBVXQFTgogbHa/JsvDNvUZfv2w==
+  dependencies:
+    "@types/react" "^18.3.3"
+    goobs-testing "^0.2.0"
+    next "^14.2.5"
+    react "^18.3.1"
+    react-dom "^18.3.1"
+    winston "^3.13.1"
+
 goobs-testing@^0.2.0:
   version "0.2.0"
   resolved "https://registry.yarnpkg.com/goobs-testing/-/goobs-testing-0.2.0.tgz#b347129552e3597e29ceb7f6cef2f4f40b70d685"

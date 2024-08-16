@@ -1,7 +1,6 @@
 import cookie from './cache/cookie.client';
 import serverless from './cache/serverless.server';
 import session from './cache/session.client';
-import twoLayer from './cache/twoLayerServerlessAndSession';
 import {
   ComplexValue,
   CacheResult,
@@ -36,7 +35,7 @@ import {
   TwoLayerMode,
 } from './types';
 
-export { cookie, serverless, session, twoLayer };
+export { cookie, serverless, session };
 
 export type {
   ComplexValue,

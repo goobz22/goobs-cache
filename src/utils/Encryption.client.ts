@@ -16,17 +16,151 @@ import { ClientLogger } from 'goobs-testing';
 
 const isBrowser = typeof window !== 'undefined' && 'crypto' in window;
 
-function getRandomValues(array: Uint8Array): Uint8Array {
-  ClientLogger.debug('Generating random values', {
-    length: array.length,
-    environment: isBrowser ? 'browser' : 'node',
-  });
-  if (isBrowser) {
-    return window.crypto.getRandomValues(array);
-  } else {
-    return Uint8Array.from(randomBytes(array.length));
-  }
-}
+export const ClientEncryptionModule = {
+  config: {} as EncryptionConfig,
+  globalConfig: {} as GlobalConfig,
+  cryptoImpl: {} as CryptoImplementation,
+
+  initialize(config: EncryptionConfig, globalConfig: GlobalConfig): void {
+    this.config = config;
+    this.globalConfig = globalConfig;
+    this.cryptoImpl = isBrowser ? new BrowserCrypto() : new NodeCrypto();
+    ClientLogger.initializeLogger(globalConfig);
+    ClientLogger.info('ClientEncryptionModule initialized', {
+      config: { ...config, encryptionPassword: '[REDACTED]' },
+      globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
+      environment: isBrowser ? 'Browser' : 'Node.js',
+      cryptoImplementation: isBrowser ? 'BrowserCrypto' : 'NodeCrypto',
+    });
+  },
+
+  getRandomValues(array: Uint8Array): Uint8Array {
+    ClientLogger.debug('Generating random values', {
+      length: array.length,
+      environment: isBrowser ? 'browser' : 'node',
+    });
+    if (isBrowser) {
+      return window.crypto.getRandomValues(array);
+    } else {
+      return Uint8Array.from(randomBytes(array.length));
+    }
+  },
+
+  encrypt(value: Uint8Array, callback: (result: EncryptedValue) => void): void {
+    ClientLogger.info('Starting encryption process', {
+      valueLength: value.length,
+      algorithm: this.config.algorithm,
+    });
+
+    const startTime: number | [number, number] = isBrowser ? performance.now() : process.hrtime();
+    const iv = this.getRandomValues(new Uint8Array(12));
+    const salt = this.getRandomValues(new Uint8Array(16));
+
+    if (value.length === 0) {
+      ClientLogger.debug('Handling empty string case in encryption');
+      callback({
+        type: 'encrypted',
+        encryptedData: new Uint8Array(0),
+        iv: iv,
+        salt: salt,
+        authTag: new Uint8Array(16),
+        encryptionKey: new Uint8Array(32),
+      });
+      return;
+    }
+
+    this.cryptoImpl.deriveKey(this.config.encryptionPassword, salt, (key) => {
+      this.cryptoImpl.encrypt(key, iv, value, ({ encrypted, authTag }) => {
+        this.cryptoImpl.exportKey(key, (exportedKey) => {
+          const endTime: number | [number, number] = isBrowser
+            ? performance.now()
+            : process.hrtime(startTime as [number, number]);
+          const totalTime = isBrowser
+            ? (endTime as number) - (startTime as number)
+            : ((endTime as [number, number])[0] * 1e9 + (endTime as [number, number])[1]) / 1e6;
+
+          ClientLogger.info('Encryption process completed successfully', {
+            totalTime: `${totalTime.toFixed(2)}ms`,
+            inputLength: value.length,
+            encryptedLength: encrypted.length,
+            ivLength: iv.length,
+            saltLength: salt.length,
+            authTagLength: authTag.length,
+            exportedKeyLength: exportedKey.length,
+          });
+
+          callback({
+            type: 'encrypted',
+            encryptedData: encrypted,
+            iv: iv,
+            salt: salt,
+            authTag: authTag,
+            encryptionKey: exportedKey,
+          });
+        });
+      });
+    });
+  },
+
+  decrypt(encryptedValue: EncryptedValue, callback: (result: Uint8Array | null) => void): void {
+    ClientLogger.info('Starting decryption process', {
+      encryptedDataLength: encryptedValue.encryptedData.length,
+      algorithm: this.config.algorithm,
+      ivLength: encryptedValue.iv.length,
+      saltLength: encryptedValue.salt.length,
+      authTagLength: encryptedValue.authTag.length,
+    });
+
+    const startTime: number | [number, number] = isBrowser ? performance.now() : process.hrtime();
+    const { iv, salt, encryptedData, authTag } = encryptedValue;
+
+    if (encryptedData.length === 0) {
+      ClientLogger.debug('Handling empty string case in decryption');
+      callback(new Uint8Array(0));
+      return;
+    }
+
+    this.cryptoImpl.deriveKey(this.config.encryptionPassword, salt, (key) => {
+      this.cryptoImpl.decrypt(key, iv, encryptedData, authTag, (decrypted) => {
+        const endTime: number | [number, number] = isBrowser
+          ? performance.now()
+          : process.hrtime(startTime as [number, number]);
+        const totalTime = isBrowser
+          ? (endTime as number) - (startTime as number)
+          : ((endTime as [number, number])[0] * 1e9 + (endTime as [number, number])[1]) / 1e6;
+
+        if (decrypted === null) {
+          ClientLogger.error('Decryption error', {
+            totalTime: `${totalTime.toFixed(2)}ms`,
+            encryptedDataLength: encryptedData.length,
+            ivLength: iv.length,
+            saltLength: salt.length,
+            authTagLength: authTag.length,
+          });
+        } else {
+          ClientLogger.info('Decryption process completed successfully', {
+            totalTime: `${totalTime.toFixed(2)}ms`,
+            encryptedDataLength: encryptedData.length,
+            decryptedDataLength: decrypted.length,
+          });
+        }
+        callback(decrypted);
+      });
+    });
+  },
+
+  updateConfig(newConfig: EncryptionConfig, newGlobalConfig: GlobalConfig): void {
+    ClientLogger.info('Updating ClientEncryptionModule configuration', {
+      oldConfig: { ...this.config, encryptionPassword: '[REDACTED]' },
+      newConfig: { ...newConfig, encryptionPassword: '[REDACTED]' },
+      oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
+      newGlobalConfig: { ...newGlobalConfig, encryptionPassword: '[REDACTED]' },
+    });
+    this.config = newConfig;
+    this.globalConfig = newGlobalConfig;
+    ClientLogger.initializeLogger(newGlobalConfig);
+  },
+};
 
 interface CryptoImplementation {
   deriveKey(password: string, salt: Uint8Array, callback: (key: CipherKey) => void): void;
@@ -309,151 +443,6 @@ class NodeCrypto implements CryptoImplementation {
   }
 }
 
-export class EncryptionModule {
-  private config: EncryptionConfig;
-  private globalConfig: GlobalConfig;
-  private cryptoImpl: CryptoImplementation;
-
-  constructor(config: EncryptionConfig, globalConfig: GlobalConfig) {
-    this.config = config;
-    this.globalConfig = globalConfig;
-    this.cryptoImpl = isBrowser ? new BrowserCrypto() : new NodeCrypto();
-    ClientLogger.initializeLogger(globalConfig);
-    ClientLogger.info('EncryptionModule initialized', {
-      config: { ...config, encryptionPassword: '[REDACTED]' },
-      globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
-      environment: isBrowser ? 'Browser' : 'Node.js',
-      cryptoImplementation: isBrowser ? 'BrowserCrypto' : 'NodeCrypto',
-    });
-  }
-
-  encrypt(value: Uint8Array, callback: (result: EncryptedValue) => void): void {
-    ClientLogger.info('Starting encryption process', {
-      valueLength: value.length,
-      algorithm: this.config.algorithm,
-    });
-
-    const startTime: number | [number, number] = isBrowser ? performance.now() : process.hrtime();
-    const iv = getRandomValues(new Uint8Array(12));
-    const salt = getRandomValues(new Uint8Array(16));
-
-    if (value.length === 0) {
-      ClientLogger.debug('Handling empty string case in encryption');
-      callback({
-        type: 'encrypted',
-        encryptedData: new Uint8Array(0),
-        iv: iv,
-        salt: salt,
-        authTag: new Uint8Array(16),
-        encryptionKey: new Uint8Array(32),
-      });
-      return;
-    }
-
-    this.cryptoImpl.deriveKey(this.config.encryptionPassword, salt, (key) => {
-      this.cryptoImpl.encrypt(key, iv, value, ({ encrypted, authTag }) => {
-        this.cryptoImpl.exportKey(key, (exportedKey) => {
-          const endTime: number | [number, number] = isBrowser
-            ? performance.now()
-            : process.hrtime(startTime as [number, number]);
-          const totalTime = isBrowser
-            ? (endTime as number) - (startTime as number)
-            : ((endTime as [number, number])[0] * 1e9 + (endTime as [number, number])[1]) / 1e6;
-
-          ClientLogger.info('Encryption process completed successfully', {
-            totalTime: `${totalTime.toFixed(2)}ms`,
-            inputLength: value.length,
-            encryptedLength: encrypted.length,
-            ivLength: iv.length,
-            saltLength: salt.length,
-            authTagLength: authTag.length,
-            exportedKeyLength: exportedKey.length,
-          });
-
-          callback({
-            type: 'encrypted',
-            encryptedData: encrypted,
-            iv: iv,
-            salt: salt,
-            authTag: authTag,
-            encryptionKey: exportedKey,
-          });
-        });
-      });
-    });
-  }
-
-  decrypt(encryptedValue: EncryptedValue, callback: (result: Uint8Array | null) => void): void {
-    ClientLogger.info('Starting decryption process', {
-      encryptedDataLength: encryptedValue.encryptedData.length,
-      algorithm: this.config.algorithm,
-      ivLength: encryptedValue.iv.length,
-      saltLength: encryptedValue.salt.length,
-      authTagLength: encryptedValue.authTag.length,
-    });
-
-    const startTime: number | [number, number] = isBrowser ? performance.now() : process.hrtime();
-    const { iv, salt, encryptedData, authTag } = encryptedValue;
-
-    if (encryptedData.length === 0) {
-      ClientLogger.debug('Handling empty string case in decryption');
-      callback(new Uint8Array(0));
-      return;
-    }
-
-    this.cryptoImpl.deriveKey(this.config.encryptionPassword, salt, (key) => {
-      this.cryptoImpl.decrypt(key, iv, encryptedData, authTag, (decrypted) => {
-        const endTime: number | [number, number] = isBrowser
-          ? performance.now()
-          : process.hrtime(startTime as [number, number]);
-        const totalTime = isBrowser
-          ? (endTime as number) - (startTime as number)
-          : ((endTime as [number, number])[0] * 1e9 + (endTime as [number, number])[1]) / 1e6;
-
-        if (decrypted === null) {
-          ClientLogger.error('Decryption error', {
-            totalTime: `${totalTime.toFixed(2)}ms`,
-            encryptedDataLength: encryptedData.length,
-            ivLength: iv.length,
-            saltLength: salt.length,
-            authTagLength: authTag.length,
-          });
-        } else {
-          ClientLogger.info('Decryption process completed successfully', {
-            totalTime: `${totalTime.toFixed(2)}ms`,
-            encryptedDataLength: encryptedData.length,
-            decryptedDataLength: decrypted.length,
-          });
-        }
-        callback(decrypted);
-      });
-    });
-  }
-
-  updateConfig(newConfig: EncryptionConfig, newGlobalConfig: GlobalConfig): void {
-    ClientLogger.info('Updating EncryptionModule configuration', {
-      oldConfig: { ...this.config, encryptionPassword: '[REDACTED]' },
-      newConfig: { ...newConfig, encryptionPassword: '[REDACTED]' },
-      oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
-      newGlobalConfig: { ...newGlobalConfig, encryptionPassword: '[REDACTED]' },
-    });
-    this.config = newConfig;
-    this.globalConfig = newGlobalConfig;
-    ClientLogger.initializeLogger(newGlobalConfig);
-  }
-}
-
-export function createEncryptionModule(
-  config: EncryptionConfig,
-  globalConfig: GlobalConfig,
-): EncryptionModule {
-  return new EncryptionModule(config, globalConfig);
-}
-
-export function initializeEncryptionLogger(globalConfig: GlobalConfig): void {
-  ClientLogger.initializeLogger(globalConfig);
-}
-
 // Add an unhandled rejection handler
 if (typeof process !== 'undefined' && process.on) {
   process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
@@ -474,5 +463,3 @@ if (typeof window !== 'undefined') {
     });
   });
 }
-
-export { ClientLogger as encryptionLogger };

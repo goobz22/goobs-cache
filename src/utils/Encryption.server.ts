@@ -19,21 +19,24 @@ const scryptAsync = promisify(scrypt);
 
 const SUPPORTED_ALGORITHMS = ['aes-256-gcm', 'aes-256-ccm'];
 
-export class ServerEncryptionModule {
-  private config: EncryptionConfig;
-  private globalConfig: GlobalConfig;
+export const ServerEncryptionModule = {
+  config: {} as EncryptionConfig,
+  globalConfig: {} as GlobalConfig,
 
-  constructor(config: EncryptionConfig, globalConfig: GlobalConfig) {
+  async initialize(config: EncryptionConfig, globalConfig: GlobalConfig): Promise<void> {
     this.config = config;
     this.globalConfig = globalConfig;
-    ServerLogger.info('ServerEncryptionModule initialized', {
+    await ServerLogger.info('ServerEncryptionModule initialized', {
       config: { ...config, encryptionPassword: '[REDACTED]' },
       globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
       supportedAlgorithms: SUPPORTED_ALGORITHMS,
     });
-  }
+    await ServerLogger.info('Server Encryption module initialized', {
+      supportedAlgorithms: SUPPORTED_ALGORITHMS,
+    });
+  },
 
-  private async deriveKey(password: string, salt: Uint8Array): Promise<Buffer> {
+  async deriveKey(password: string, salt: Uint8Array): Promise<Buffer> {
     await ServerLogger.debug('Deriving encryption key', {
       passwordLength: password.length,
       saltLength: salt.length,
@@ -60,7 +63,7 @@ export class ServerEncryptionModule {
       });
       throw error;
     }
-  }
+  },
 
   async encrypt(value: Uint8Array): Promise<EncryptedValue> {
     await ServerLogger.info('Starting encryption process', {
@@ -136,7 +139,7 @@ export class ServerEncryptionModule {
       });
       throw error;
     }
-  }
+  },
 
   async decrypt(encryptedValue: EncryptedValue): Promise<Uint8Array> {
     await ServerLogger.info('Starting decryption process', {
@@ -212,10 +215,10 @@ export class ServerEncryptionModule {
       });
       throw error;
     }
-  }
+  },
 
-  updateConfig(newConfig: EncryptionConfig, newGlobalConfig: GlobalConfig): void {
-    ServerLogger.info('Updating ServerEncryptionModule configuration', {
+  async updateConfig(newConfig: EncryptionConfig, newGlobalConfig: GlobalConfig): Promise<void> {
+    await ServerLogger.info('Updating ServerEncryptionModule configuration', {
       oldConfig: { ...this.config, encryptionPassword: '[REDACTED]' },
       newConfig: { ...newConfig, encryptionPassword: '[REDACTED]' },
       oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
@@ -223,21 +226,8 @@ export class ServerEncryptionModule {
     });
     this.config = newConfig;
     this.globalConfig = newGlobalConfig;
-  }
-}
-
-export function createServerEncryptionModule(
-  config: EncryptionConfig,
-  globalConfig: GlobalConfig,
-): ServerEncryptionModule {
-  return new ServerEncryptionModule(config, globalConfig);
-}
-
-export async function initializeServerEncryptionLogger(): Promise<void> {
-  await ServerLogger.info('Server Encryption module initialized', {
-    supportedAlgorithms: SUPPORTED_ALGORITHMS,
-  });
-}
+  },
+};
 
 // Add an unhandled rejection handler
 process.on('unhandledRejection', async (reason: unknown, promise: Promise<unknown>) => {
@@ -247,5 +237,3 @@ process.on('unhandledRejection', async (reason: unknown, promise: Promise<unknow
     stack: reason instanceof Error ? reason.stack : undefined,
   });
 });
-
-export { ServerLogger as serverEncryptionLogger };

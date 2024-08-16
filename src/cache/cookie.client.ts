@@ -1,71 +1,77 @@
 'use client';
 
-import { DataValue, CacheResult } from '../types';
+import { DataValue, CacheResult, GlobalConfig } from '../types';
 import { ClientLogger } from 'goobs-testing';
-import CookieUtils, { updateConfig as updateCookieConfig } from '../utils/cookie.client';
+import CookieUtils from '../utils/cookie.client';
 
-let cookieCache: CookieCache | null = null;
+const defaultGlobalConfig: Pick<GlobalConfig, 'loggingEnabled' | 'logLevel' | 'logDirectory'> = {
+  loggingEnabled: true,
+  logLevel: 'debug',
+  logDirectory: 'logs',
+};
 
-class CookieCache {
-  constructor() {
-    ClientLogger.info('Initializing CookieCache');
-    this.loadFromCookies();
-  }
+export const CookieClientModule = {
+  globalConfig: defaultGlobalConfig,
 
-  private async loadFromCookies(): Promise<void> {
-    const startTime = performance.now();
-    ClientLogger.info('Loading cache from cookies');
-    // CookieUtils handles the loading internally
-    const duration = performance.now() - startTime;
-    ClientLogger.info('Finished loading cache from cookies', {
-      duration: `${duration.toFixed(2)}ms`,
-    });
-  }
+  initialize(encryptionPassword?: string) {
+    ClientLogger.info('Initializing CookieClientModule');
+    CookieUtils.initialize(encryptionPassword);
+    ClientLogger.info('CookieClientModule initialized');
+  },
 
-  async set(
-    identifier: string,
-    storeName: string,
-    value: DataValue,
-    expirationDate: Date,
-  ): Promise<void> {
+  set(identifier: string, storeName: string, value: DataValue, expirationDate: Date) {
     const startTime = performance.now();
     ClientLogger.info(`Setting cache value for ${identifier}/${storeName}`);
 
-    const cacheResult: CacheResult = {
-      identifier,
-      storeName,
-      value,
-      expirationDate,
-      lastUpdatedDate: new Date(),
-      lastAccessedDate: new Date(),
-      getHitCount: 0,
-      setHitCount: 1,
-    };
+    try {
+      const cacheResult: CacheResult = {
+        identifier,
+        storeName,
+        value,
+        expirationDate,
+        lastUpdatedDate: new Date(),
+        lastAccessedDate: new Date(),
+        getHitCount: 0,
+        setHitCount: 1,
+      };
 
-    await CookieUtils.setCookie(`${identifier}_${storeName}`, JSON.stringify(cacheResult), {
-      expires: expirationDate,
-      path: '/',
-    });
+      CookieUtils.setCookie(`${identifier}_${storeName}`, JSON.stringify(cacheResult), {
+        expires: expirationDate,
+        path: '/',
+        secure: true,
+        sameSite: 'strict',
+      });
 
-    const duration = performance.now() - startTime;
-    ClientLogger.info(`Cache value set successfully for ${identifier}/${storeName}`, {
-      duration: `${duration.toFixed(2)}ms`,
-    });
-  }
+      const duration = performance.now() - startTime;
+      ClientLogger.info(`Cache value set successfully for ${identifier}/${storeName}`, {
+        duration: `${duration.toFixed(2)}ms`,
+      });
+    } catch (error) {
+      ClientLogger.error(`Failed to set cache value for ${identifier}/${storeName}`, { error });
+      throw new Error(`Failed to set cache value: ${error}`);
+    }
+  },
 
-  async get(identifier: string, storeName: string): Promise<CacheResult | undefined> {
+  get(identifier: string, storeName: string) {
     const startTime = performance.now();
     ClientLogger.info(`Getting cache value for ${identifier}/${storeName}`);
 
-    const cookieValue = await CookieUtils.getCookie(`${identifier}_${storeName}`);
+    try {
+      const cookieValue = CookieUtils.getCookie(`${identifier}_${storeName}`);
 
-    if (cookieValue) {
-      try {
+      if (cookieValue) {
         const cacheResult: CacheResult = JSON.parse(cookieValue);
+
+        if (new Date(cacheResult.expirationDate) < new Date()) {
+          this.remove(identifier, storeName);
+          ClientLogger.info(`Cache value expired for ${identifier}/${storeName}`);
+          return undefined;
+        }
+
         cacheResult.lastAccessedDate = new Date();
         cacheResult.getHitCount += 1;
 
-        await this.set(identifier, storeName, cacheResult.value, cacheResult.expirationDate);
+        this.set(identifier, storeName, cacheResult.value, new Date(cacheResult.expirationDate));
 
         const duration = performance.now() - startTime;
         ClientLogger.info(`Cache value retrieved successfully for ${identifier}/${storeName}`, {
@@ -73,88 +79,77 @@ class CookieCache {
         });
 
         return cacheResult;
-      } catch (error) {
-        ClientLogger.error(`Failed to parse cookie value for ${identifier}/${storeName}`, {
-          error,
-        });
       }
+
+      ClientLogger.warn(`Value not found for ${identifier}/${storeName}`);
+      return undefined;
+    } catch (error) {
+      ClientLogger.error(`Failed to get cache value for ${identifier}/${storeName}`, { error });
+      return undefined;
     }
+  },
 
-    ClientLogger.warn(`Value not found for ${identifier}/${storeName}`);
-    return undefined;
-  }
-
-  async remove(identifier: string, storeName: string): Promise<void> {
+  remove(identifier: string, storeName: string) {
     const startTime = performance.now();
     ClientLogger.info(`Removing cache value for ${identifier}/${storeName}`);
 
-    CookieUtils.deleteCookie(`${identifier}_${storeName}`);
+    try {
+      CookieUtils.deleteCookie(`${identifier}_${storeName}`);
 
-    const duration = performance.now() - startTime;
-    ClientLogger.info(`Cache value removed for ${identifier}/${storeName}`, {
-      duration: `${duration.toFixed(2)}ms`,
-    });
-  }
+      const duration = performance.now() - startTime;
+      ClientLogger.info(`Cache value removed for ${identifier}/${storeName}`, {
+        duration: `${duration.toFixed(2)}ms`,
+      });
+    } catch (error) {
+      ClientLogger.error(`Failed to remove cache value for ${identifier}/${storeName}`, { error });
+      throw new Error(`Failed to remove cache value: ${error}`);
+    }
+  },
 
-  async clear(): Promise<void> {
+  clear() {
     const startTime = performance.now();
     ClientLogger.info('Clearing all cache values');
 
-    // This is a simplification. In reality, you'd need to identify and clear only the cookies set by this cache.
-    document.cookie.split(';').forEach((cookie) => {
-      const [key] = cookie.trim().split('=');
-      CookieUtils.deleteCookie(key);
-    });
+    try {
+      const cookies = document.cookie.split(';');
 
-    const duration = performance.now() - startTime;
-    ClientLogger.info('All cache values cleared', { duration: `${duration.toFixed(2)}ms` });
-  }
+      for (const cookie of cookies) {
+        const [key] = cookie.trim().split('=');
+        if (key.includes('_')) {
+          // Only clear cookies set by this module
+          CookieUtils.deleteCookie(key);
+        }
+      }
 
-  updateConfig(): void {
-    updateCookieConfig();
-  }
-
-  static create(): CookieCache {
-    return new CookieCache();
-  }
-}
-
-function initializeCookieCache(): void {
-  if (!cookieCache) {
-    ClientLogger.info('Creating CookieCache instance');
-    cookieCache = CookieCache.create();
-  }
-}
-
-function createCookieAtom(identifier: string, storeName: string) {
-  initializeCookieCache();
-
-  return {
-    get: async (): Promise<CacheResult | undefined> => {
-      return cookieCache!.get(identifier, storeName);
-    },
-    set: async (value: DataValue): Promise<void> => {
-      const expirationDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year from now
-      await cookieCache!.set(identifier, storeName, value, expirationDate);
-    },
-    remove: async (): Promise<void> => {
-      await cookieCache!.remove(identifier, storeName);
-    },
-  };
-}
-
-export const cookie = {
-  atom: createCookieAtom,
-  clear: async (): Promise<void> => {
-    initializeCookieCache();
-    await cookieCache!.clear();
-  },
-  updateConfig: (): void => {
-    if (cookieCache) {
-      cookieCache.updateConfig();
-    } else {
-      initializeCookieCache();
+      const duration = performance.now() - startTime;
+      ClientLogger.info('All cache values cleared', { duration: `${duration.toFixed(2)}ms` });
+    } catch (error) {
+      ClientLogger.error('Failed to clear all cache values', { error });
+      throw new Error(`Failed to clear cache values: ${error}`);
     }
+  },
+
+  updateConfig(
+    newGlobalConfig?: Partial<Pick<GlobalConfig, 'loggingEnabled' | 'logLevel' | 'logDirectory'>>,
+    newEncryptionPassword?: string,
+  ) {
+    ClientLogger.debug('Updating configuration');
+    if (newGlobalConfig) {
+      this.globalConfig = { ...this.globalConfig, ...newGlobalConfig };
+    }
+    CookieUtils.updateConfig(undefined, this.globalConfig, newEncryptionPassword);
+    ClientLogger.info('CookieClientModule configuration updated');
+  },
+
+  createAtom(identifier: string, storeName: string) {
+    return {
+      get: () => this.get(identifier, storeName),
+      set: (value: DataValue) => {
+        const expirationDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year from now
+        this.set(identifier, storeName, value, expirationDate);
+      },
+      remove: () => this.remove(identifier, storeName),
+    };
   },
 };
 
@@ -167,4 +162,7 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export default cookie;
+// Initialize the module without encryption by default
+CookieClientModule.initialize();
+
+export default CookieClientModule;

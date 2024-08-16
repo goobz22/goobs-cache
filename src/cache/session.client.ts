@@ -1,49 +1,38 @@
 'use client';
 
-import { atom as createAtom, useAtom as useVanillaAtom } from '../utils/session.client';
+import SessionClientModule from '../utils/session.client';
 import { ClientLogger } from 'goobs-testing';
+import { GlobalConfig } from '../types';
 
-/**
- * Creates a new atom for session storage.
- *
- * @template Value The type of the atom's value
- * @param initialValue The initial value of the atom
- * @returns A new session atom
- *
- * @example
- * const myAtom = atom(0)
- * const myStringAtom = atom('hello')
- * const myObjectAtom = atom({ foo: 'bar' })
- */
-function atom<Value>(initialValue: Value) {
-  return createAtom(initialValue);
-}
-
-/**
- * A hook to use session atoms in React components.
- *
- * @template Value The type of the atom's value
- * @param anAtom The atom to use
- * @returns A tuple containing the current value and a setter function
- *
- * @example
- * function Counter() {
- *   const [count, setCount] = useAtom(countAtom)
- *   return (
- *     <div>
- *       Count: {count}
- *       <button onClick={() => setCount(c => c + 1)}>Increment</button>
- *     </div>
- *   )
- * }
- */
-function useAtom<Value>(anAtom: ReturnType<typeof atom<Value>>) {
-  return useVanillaAtom(anAtom);
-}
+const defaultGlobalConfig: Pick<GlobalConfig, 'loggingEnabled' | 'logLevel' | 'logDirectory'> = {
+  loggingEnabled: true,
+  logLevel: 'debug',
+  logDirectory: 'logs',
+};
 
 export const session = {
-  atom,
-  useAtom,
+  globalConfig: defaultGlobalConfig,
+
+  initialize(encryptionPassword?: string) {
+    ClientLogger.debug('Initializing session module');
+    SessionClientModule.initialize(encryptionPassword);
+    ClientLogger.debug('Session module initialized');
+  },
+
+  atom: SessionClientModule.atom,
+  useAtom: SessionClientModule.useAtom,
+
+  updateConfig(
+    newGlobalConfig?: Partial<Pick<GlobalConfig, 'loggingEnabled' | 'logLevel' | 'logDirectory'>>,
+    newEncryptionPassword?: string,
+  ) {
+    ClientLogger.debug('Updating session configuration');
+    if (newGlobalConfig) {
+      this.globalConfig = { ...this.globalConfig, ...newGlobalConfig };
+    }
+    SessionClientModule.updateConfig(undefined, this.globalConfig, newEncryptionPassword);
+    ClientLogger.debug('Session configuration updated');
+  },
 };
 
 if (typeof window !== 'undefined') {
@@ -54,5 +43,8 @@ if (typeof window !== 'undefined') {
     });
   });
 }
+
+// Initialize the module without encryption by default
+session.initialize();
 
 export default session;

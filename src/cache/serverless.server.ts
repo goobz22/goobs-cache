@@ -12,10 +12,9 @@ import {
 } from '../types';
 import ServerHitCountModule from '../utils/hitCount.server';
 import ServerLastDateModule from '../utils/lastDate.server';
-import ServerConfigModule from '../utils/loadConfig.server';
 import { ServerLogger } from 'goobs-testing';
-import { createServerCompressionModule } from '../utils/compression.server';
-import { createServerEncryptionModule } from '../utils/encryption.server';
+import { ServerCompressionModule } from '../utils/compression.server';
+import { ServerEncryptionModule } from '../utils/encryption.server';
 
 let serverlessCache: ServerlessCache | null = null;
 
@@ -27,30 +26,34 @@ interface CacheStructure {
 
 class ServerlessCache implements StorageInterface {
   private cache: CacheStructure = {};
-  private compressionModule;
-  private encryptionModule;
 
   private constructor(
     private config: ServerlessCacheConfig,
     private globalConfig: GlobalConfig,
+    private encryptionPassword: string,
   ) {
     ServerLogger.initializeLogger(this.globalConfig);
     ServerHitCountModule.initializeLogger(this.globalConfig);
     ServerLastDateModule.initializeLogger(this.globalConfig);
-    this.compressionModule = createServerCompressionModule(
-      this.config.compression,
+
+    // Instead of calling initialize, we'll set the globalConfig directly
+    ServerCompressionModule.globalConfig = this.globalConfig;
+
+    ServerEncryptionModule.initialize(
+      { ...this.config.encryption, encryptionPassword: this.encryptionPassword },
       this.globalConfig,
     );
-    this.encryptionModule = createServerEncryptionModule(this.config.encryption, this.globalConfig);
     ServerLogger.info('Initializing ServerlessCache', {
       config: { ...config, encryptionPassword: '[REDACTED]' },
       globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
     });
   }
-
-  static async create(): Promise<ServerlessCache> {
-    const config = await ServerConfigModule.getConfig();
-    return new ServerlessCache(config.serverless, config.global);
+  static async create(
+    config: ServerlessCacheConfig,
+    globalConfig: GlobalConfig,
+    encryptionPassword: string,
+  ): Promise<ServerlessCache> {
+    return new ServerlessCache(config, globalConfig, encryptionPassword);
   }
 
   private getOrCreateCache(identifier: string, storeName: string): LRUCache<string, CacheResult> {
@@ -113,10 +116,11 @@ class ServerlessCache implements StorageInterface {
         );
 
         // Decrypt the value
-        const decryptedValue = await this.encryptionModule.decrypt(result.value as EncryptedValue);
-        result.value = JSON.parse(
-          await this.compressionModule.decompressData(Buffer.from(decryptedValue)),
+        const decryptedValue = await ServerEncryptionModule.decrypt(result.value as EncryptedValue);
+        const decompressedValue = await ServerCompressionModule.decompressData(
+          Buffer.from(decryptedValue),
         );
+        result.value = JSON.parse(decompressedValue);
       }
       const [seconds, nanoseconds] = process.hrtime(startTime);
       const duration = seconds * 1000 + nanoseconds / 1e6;
@@ -143,10 +147,10 @@ class ServerlessCache implements StorageInterface {
         item.lastUpdatedDate = new Date();
 
         // Compress and encrypt the value
-        const compressedValue = await this.compressionModule.compressData(
+        const compressedValue = await ServerCompressionModule.compressData(
           JSON.stringify(item.value),
         );
-        const encryptedValue = await this.encryptionModule.encrypt(
+        const encryptedValue = await ServerEncryptionModule.encrypt(
           Uint8Array.from(compressedValue),
         );
         item.value = encryptedValue;
@@ -252,24 +256,31 @@ class ServerlessCache implements StorageInterface {
     }
   }
 
-  async updateConfig(): Promise<void> {
-    const newConfig = await ServerConfigModule.getConfig();
+  async updateConfig(
+    newConfig: ServerlessCacheConfig,
+    newGlobalConfig: GlobalConfig,
+    newEncryptionPassword: string,
+  ): Promise<void> {
     ServerLogger.info('Updating ServerlessCache configuration', {
       oldConfig: { ...this.config, encryptionPassword: '[REDACTED]' },
-      newConfig: { ...newConfig.serverless, encryptionPassword: '[REDACTED]' },
+      newConfig: { ...newConfig, encryptionPassword: '[REDACTED]' },
       oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
-      newGlobalConfig: { ...newConfig.global, encryptionPassword: '[REDACTED]' },
+      newGlobalConfig: { ...newGlobalConfig, encryptionPassword: '[REDACTED]' },
     });
-    this.config = newConfig.serverless;
-    this.globalConfig = newConfig.global;
-    ServerLogger.initializeLogger(newConfig.global);
-    ServerHitCountModule.initializeLogger(newConfig.global);
-    ServerLastDateModule.initializeLogger(newConfig.global);
-    this.compressionModule = createServerCompressionModule(
-      this.config.compression,
+    this.config = newConfig;
+    this.globalConfig = newGlobalConfig;
+    this.encryptionPassword = newEncryptionPassword;
+    ServerLogger.initializeLogger(newGlobalConfig);
+    ServerHitCountModule.initializeLogger(newGlobalConfig);
+    ServerLastDateModule.initializeLogger(newGlobalConfig);
+
+    // Update ServerCompressionModule's globalConfig directly
+    ServerCompressionModule.globalConfig = this.globalConfig;
+
+    ServerEncryptionModule.updateConfig(
+      { ...this.config.encryption, encryptionPassword: this.encryptionPassword },
       this.globalConfig,
     );
-    this.encryptionModule = createServerEncryptionModule(this.config.encryption, this.globalConfig);
 
     // Update configuration for all caches
     for (const identifier in this.cache) {
@@ -288,7 +299,11 @@ class ServerlessCache implements StorageInterface {
   }
 }
 
-async function initializeServerlessCache(): Promise<ServerlessCache> {
+async function initializeServerlessCache(
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
+  encryptionPassword: string,
+): Promise<ServerlessCache> {
   const startTime = process.hrtime();
   ServerLogger.debug('Initializing serverless cache...', {
     currentInstance: serverlessCache ? 'exists' : 'null',
@@ -296,7 +311,7 @@ async function initializeServerlessCache(): Promise<ServerlessCache> {
 
   try {
     if (!serverlessCache) {
-      serverlessCache = await ServerlessCache.create();
+      serverlessCache = await ServerlessCache.create(config, globalConfig, encryptionPassword);
       const [seconds, nanoseconds] = process.hrtime(startTime);
       const duration = seconds * 1000 + nanoseconds / 1e6;
       ServerLogger.info('Serverless cache initialized successfully.', {
@@ -315,17 +330,22 @@ async function initializeServerlessCache(): Promise<ServerlessCache> {
   }
 }
 
-function createServerlessAtom(identifier: string, storeName: string) {
+function createServerlessAtom(
+  config: ServerlessCacheConfig,
+  globalConfig: GlobalConfig,
+  encryptionPassword: string,
+  identifier: string,
+  storeName: string,
+) {
   return {
     get: async (): Promise<CacheResult | undefined> => {
-      const cache = await initializeServerlessCache();
+      const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
       const result = await cache.get(identifier, storeName);
       return result[0];
     },
     set: async (value: DataValue): Promise<void> => {
-      const cache = await initializeServerlessCache();
-      const config = await ServerConfigModule.getConfig();
-      const expirationDate = new Date(Date.now() + config.serverless.cacheMaxAge);
+      const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
+      const expirationDate = new Date(Date.now() + config.cacheMaxAge);
       await cache.set(identifier, storeName, [
         {
           identifier,
@@ -340,7 +360,7 @@ function createServerlessAtom(identifier: string, storeName: string) {
       ]);
     },
     remove: async (): Promise<void> => {
-      const cache = await initializeServerlessCache();
+      const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
       await cache.remove(identifier, storeName);
     },
   };
@@ -348,16 +368,29 @@ function createServerlessAtom(identifier: string, storeName: string) {
 
 export const serverless = {
   atom: createServerlessAtom,
-  clear: async (): Promise<void> => {
-    const cache = await initializeServerlessCache();
+  clear: async (
+    config: ServerlessCacheConfig,
+    globalConfig: GlobalConfig,
+    encryptionPassword: string,
+  ): Promise<void> => {
+    const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
     await cache.clear();
   },
-  updateConfig: async (): Promise<void> => {
-    const cache = await initializeServerlessCache();
-    await cache.updateConfig();
+  updateConfig: async (
+    config: ServerlessCacheConfig,
+    globalConfig: GlobalConfig,
+    encryptionPassword: string,
+  ): Promise<void> => {
+    const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
+    await cache.updateConfig(config, globalConfig, encryptionPassword);
   },
-  setEvictionPolicy: async (policy: EvictionPolicy): Promise<void> => {
-    const cache = await initializeServerlessCache();
+  setEvictionPolicy: async (
+    config: ServerlessCacheConfig,
+    globalConfig: GlobalConfig,
+    encryptionPassword: string,
+    policy: EvictionPolicy,
+  ): Promise<void> => {
+    const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
     await cache.setEvictionPolicy(policy);
   },
 };

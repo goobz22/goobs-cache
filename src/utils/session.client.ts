@@ -3,150 +3,239 @@
 import { useAtom as jotaiUseAtom } from 'jotai';
 import { atomWithStorage } from 'jotai/utils';
 import { ClientLogger } from 'goobs-testing';
-import { GlobalConfig, SessionCacheConfig } from '../types';
-import ClientConfigModule from './loadConfig.client';
-import {
-  CompressionModule,
-  createCompressionModule,
-  initializeCompressionLogger,
-} from './compression.client';
-import {
-  EncryptionModule,
-  createEncryptionModule,
-  initializeEncryptionLogger,
-} from './encryption.client';
+import { GlobalConfig, SessionCacheConfig, EncryptedValue } from '../types';
+import { ClientCompressionModule as ClientCompressionModuleImport } from './compression.client';
+import { ClientEncryptionModule } from './encryption.client';
 import HitCountModule from './hitCount.client';
 import ClientLastDateModule from './lastDate.client';
 
-let globalConfig: GlobalConfig | undefined;
-let sessionConfig: SessionCacheConfig | undefined;
-let encryptionModule: EncryptionModule | undefined;
-let compressionModule: CompressionModule | undefined;
+// Extend the ClientCompressionModule type with an initialize method
+const ClientCompressionModule: typeof ClientCompressionModuleImport & {
+  initialize: (compression: SessionCacheConfig['compression'], globalConfig: GlobalConfig) => void;
+} = {
+  ...ClientCompressionModuleImport,
+  initialize: () => {}, // Add a no-op initialize method if it doesn't exist
+};
 
-function initializeModules() {
-  ClientLogger.debug('Initializing modules');
-  if (!globalConfig || !sessionConfig) {
-    ClientLogger.debug('Fetching configuration');
-    const config = ClientConfigModule.getConfig();
-    globalConfig = config.global;
-    sessionConfig = config.session;
+const defaultSessionConfig: Omit<SessionCacheConfig, 'encryption'> = {
+  cacheSize: 5000,
+  cacheMaxAge: 1800000,
+  evictionPolicy: 'lru',
+  compression: {
+    compressionLevel: -1,
+  },
+};
 
-    if (globalConfig) {
-      ClientLogger.debug('Initializing loggers', { globalConfig });
-      ClientLogger.initializeLogger(globalConfig);
-      initializeEncryptionLogger(globalConfig);
-      initializeCompressionLogger(globalConfig);
-      HitCountModule.initializeLogger(globalConfig);
-      ClientLastDateModule.initializeLogger(globalConfig);
+const defaultGlobalConfig: GlobalConfig = {
+  keySize: 256,
+  batchSize: 100,
+  autoTuneInterval: 3600000,
+  loggingEnabled: true,
+  logLevel: 'debug',
+  logDirectory: 'logs',
+  initialize: (config: Partial<GlobalConfig>) => {
+    Object.assign(defaultGlobalConfig, config);
+  },
+};
+
+const SessionClientModule = {
+  globalConfig: defaultGlobalConfig,
+  sessionConfig: defaultSessionConfig,
+  encryptionPassword: undefined as string | undefined,
+  itemNotFoundCache: new Set<string>(),
+
+  initialize(encryptionPassword?: string): void {
+    ClientLogger.debug('Initializing SessionClientModule');
+    this.encryptionPassword = encryptionPassword;
+
+    ClientLogger.debug('Initializing loggers', { globalConfig: this.globalConfig });
+    this.globalConfig.initialize(this.globalConfig);
+    ClientLogger.initializeLogger(this.globalConfig);
+
+    if (this.encryptionPassword) {
+      ClientLogger.debug('Initializing encryption module');
+      ClientEncryptionModule.initialize(
+        {
+          algorithm: 'aes-256-gcm',
+          encryptionPassword: this.encryptionPassword,
+          keyCheckIntervalMs: 86400000,
+          keyRotationIntervalMs: 7776000000,
+        },
+        this.globalConfig,
+      );
     } else {
-      ClientLogger.error('Global configuration is undefined');
+      ClientLogger.debug('Encryption disabled: No encryption password provided');
     }
 
-    if (sessionConfig && globalConfig) {
-      ClientLogger.debug('Creating encryption and compression modules', { sessionConfig });
-      encryptionModule = createEncryptionModule(sessionConfig.encryption, globalConfig);
-      compressionModule = createCompressionModule(sessionConfig.compression, globalConfig);
-    } else {
-      ClientLogger.error('Session or global configuration is undefined');
-    }
-  } else {
-    ClientLogger.debug('Modules already initialized');
-  }
-}
+    ClientCompressionModule.initialize(this.sessionConfig.compression, this.globalConfig);
+    HitCountModule.initializeLogger(this.globalConfig);
+    ClientLastDateModule.initializeLogger(this.globalConfig);
 
-export function atom<Value>(initialValue: Value) {
-  ClientLogger.debug('Creating atom', { initialValue });
-  initializeModules();
-  const key = `atom-${Math.random().toString(36).substr(2, 9)}`;
-  ClientLogger.debug('Generated atom key', { key });
+    ClientLogger.debug('SessionClientModule initialized successfully');
+  },
 
-  return atomWithStorage<Value>(key, initialValue, {
-    getItem: async (key, initialValue) => {
-      ClientLogger.debug('Getting item from storage', { key });
-      const item = sessionStorage.getItem(key);
-      if (item !== null && encryptionModule && compressionModule) {
-        try {
-          ClientLogger.debug('Parsing stored item', { key });
-          const parsedItem = JSON.parse(item);
-          return new Promise<Value>((resolve) => {
-            ClientLogger.debug('Decrypting item', { key });
-            encryptionModule!.decrypt(parsedItem, (decrypted) => {
+  atom<Value>(initialValue: Value) {
+    ClientLogger.debug('Creating atom', { initialValue });
+    const key = `atom-${Math.random().toString(36).substr(2, 9)}`;
+    ClientLogger.debug('Generated atom key', { key });
+
+    return atomWithStorage<Value>(key, initialValue, {
+      getItem: (key, initialValue) => {
+        ClientLogger.debug('Getting item from storage', { key });
+        const item = sessionStorage.getItem(key);
+        if (item !== null) {
+          try {
+            ClientLogger.debug('Parsing stored item', { key });
+            let parsedItem = JSON.parse(item);
+
+            if (this.encryptionPassword) {
+              ClientLogger.debug('Decrypting item', { key });
+              let decrypted: Uint8Array | null = null;
+              ClientEncryptionModule.decrypt(parsedItem as EncryptedValue, (result) => {
+                decrypted = result;
+              });
               if (decrypted) {
-                ClientLogger.debug('Decompressing item', { key });
-                const decompressed = compressionModule!.decompressData(decrypted, 'string');
-                const result = JSON.parse(decompressed as string);
-                ClientLogger.debug('Successfully retrieved and processed item', { key, result });
-                resolve(result);
+                parsedItem = decrypted;
               } else {
-                ClientLogger.warn('Decryption failed, using initial value', { key, initialValue });
-                resolve(initialValue);
+                ClientLogger.warn(
+                  'Decryption failed, using parsed (potentially unencrypted) value',
+                  { key },
+                );
+                return initialValue;
               }
+            }
+
+            ClientLogger.debug('Decompressing item', { key });
+            const decompressed = ClientCompressionModule.decompressData(parsedItem, 'string');
+            if (decompressed === null) {
+              ClientLogger.warn('Decompression failed, using initial value', { key });
+              return initialValue;
+            }
+            let result: Value;
+            if (typeof decompressed === 'string') {
+              result = JSON.parse(decompressed);
+            } else {
+              // If decompressed is a Uint8Array, convert it to a string
+              const decoder = new TextDecoder();
+              result = JSON.parse(decoder.decode(decompressed));
+            }
+            ClientLogger.debug('Successfully retrieved and processed item', { key, result });
+            return result;
+          } catch (error) {
+            ClientLogger.error(`Failed to parse stored value for key ${key}`, { error });
+            return initialValue;
+          }
+        }
+        if (!this.itemNotFoundCache) {
+          this.itemNotFoundCache = new Set<string>();
+        }
+        if (!this.itemNotFoundCache.has(key)) {
+          ClientLogger.debug('Item not found, using initial value', { key, initialValue });
+          this.itemNotFoundCache.add(key);
+        }
+        return initialValue;
+      },
+      setItem: (key, value) => {
+        ClientLogger.debug('setItem called', {
+          key,
+          valueType: typeof value,
+          valueLength: JSON.stringify(value).length,
+        });
+        const stringValue = JSON.stringify(value);
+        ClientLogger.debug('Value stringified', { stringLength: stringValue.length });
+
+        ClientLogger.debug('Calling compressData');
+        const compressionResult = ClientCompressionModule.compressData(stringValue);
+
+        if (compressionResult === null) {
+          ClientLogger.error('Compression returned null', { key });
+          return;
+        }
+
+        ClientLogger.debug('Compression result', {
+          compressed: compressionResult.compressed,
+          originalLength: stringValue.length,
+          compressedLength: compressionResult.data.length,
+        });
+
+        let dataToStore: string | Uint8Array = compressionResult.data;
+        const isCompressed = compressionResult.compressed;
+
+        if (this.encryptionPassword) {
+          ClientLogger.debug('Encrypting value', { key, isCompressed });
+          let encrypted: EncryptedValue | undefined;
+          ClientEncryptionModule.encrypt(dataToStore, (result) => {
+            encrypted = result;
+          });
+          if (encrypted) {
+            dataToStore = JSON.stringify({ ...encrypted, isCompressed });
+            ClientLogger.debug('Encryption successful', {
+              encryptedLength: JSON.stringify(dataToStore).length,
             });
+          } else {
+            ClientLogger.error('Encryption failed', { key });
+            return;
+          }
+        } else if (isCompressed) {
+          // If not encrypted but compressed, we need to store the compression flag
+          dataToStore = JSON.stringify({ data: Array.from(dataToStore), isCompressed });
+          ClientLogger.debug('Prepared compressed data for storage', {
+            dataLength: JSON.stringify(dataToStore).length,
           });
-        } catch (error) {
-          ClientLogger.error(`Failed to parse stored value for key ${key}`, { error });
-          return initialValue;
         }
-      }
-      ClientLogger.debug('Item not found or modules not initialized, using initial value', {
-        key,
-        initialValue,
-      });
-      return initialValue;
-    },
-    setItem: async (key, value) => {
-      ClientLogger.debug('Setting item in storage', { key, value });
-      return new Promise<void>((resolve) => {
-        if (encryptionModule && compressionModule) {
-          const stringValue = JSON.stringify(value);
-          ClientLogger.debug('Compressing value', { key });
-          const compressed = compressionModule.compressData(stringValue);
-          ClientLogger.debug('Encrypting compressed value', { key });
-          encryptionModule.encrypt(compressed, (encrypted) => {
-            ClientLogger.debug('Storing encrypted value', { key });
-            sessionStorage.setItem(key, JSON.stringify(encrypted));
-            ClientLogger.debug('Incrementing set hit count', { key });
-            HitCountModule.incrementSetHitCount(
-              (k) => sessionStorage.getItem(k),
-              (k, v) => sessionStorage.setItem(k, v),
-              key,
-              'atom',
-            );
-            ClientLogger.debug('Updating last dates', { key });
-            ClientLastDateModule.updateLastDates(
-              (k, v) => sessionStorage.setItem(k, v),
-              key,
-              'atom',
-              { lastUpdatedDate: new Date(), lastAccessedDate: new Date() },
-            );
-            ClientLogger.debug(`Saved atom ${key} to storage`, { value });
-            resolve();
-          });
-        } else {
-          ClientLogger.error('Encryption or compression module not initialized');
-          resolve();
-        }
-      });
-    },
-    removeItem: async (key) => {
-      ClientLogger.debug(`Removing atom ${key} from storage`);
-      sessionStorage.removeItem(key);
-      ClientLogger.debug(`Removed atom ${key} from storage`);
-    },
-  });
-}
 
-export const useAtom = jotaiUseAtom;
+        ClientLogger.debug('Storing value', {
+          key,
+          isCompressed,
+          dataLength: JSON.stringify(dataToStore).length,
+        });
+        sessionStorage.setItem(key, JSON.stringify(dataToStore));
+        ClientLogger.debug('Value stored in sessionStorage');
+        ClientLogger.debug('Incrementing set hit count', { key });
+        HitCountModule.incrementSetHitCount(
+          (k) => sessionStorage.getItem(k),
+          (k, v) => sessionStorage.setItem(k, v),
+          key,
+          'atom',
+        );
+        ClientLogger.debug('Updating last dates', { key });
+        ClientLastDateModule.updateLastDates((k, v) => sessionStorage.setItem(k, v), key, 'atom', {
+          lastUpdatedDate: new Date(),
+          lastAccessedDate: new Date(),
+        });
+        ClientLogger.debug(`Saved atom ${key} to storage`, { value });
+        this.itemNotFoundCache.delete(key);
+      },
+      removeItem: (key) => {
+        ClientLogger.debug(`Removing atom ${key} from storage`);
+        sessionStorage.removeItem(key);
+        ClientLogger.debug(`Removed atom ${key} from storage`);
+        this.itemNotFoundCache.delete(key);
+      },
+    });
+  },
 
-export function updateConfig(): void {
-  ClientLogger.debug('Updating configuration');
-  globalConfig = undefined;
-  sessionConfig = undefined;
-  encryptionModule = undefined;
-  compressionModule = undefined;
-  initializeModules();
-  ClientLogger.debug('Configuration updated and modules reinitialized');
-}
+  useAtom: jotaiUseAtom,
+
+  updateConfig(
+    newSessionConfig?: Partial<Omit<SessionCacheConfig, 'encryption'>>,
+    newGlobalConfig?: Partial<GlobalConfig>,
+    newEncryptionPassword?: string,
+  ): void {
+    ClientLogger.debug('Updating configuration');
+    if (newSessionConfig) {
+      this.sessionConfig = { ...this.sessionConfig, ...newSessionConfig };
+    }
+    if (newGlobalConfig) {
+      this.globalConfig.initialize(newGlobalConfig);
+    }
+    if (newEncryptionPassword !== undefined) {
+      this.encryptionPassword = newEncryptionPassword;
+    }
+    this.initialize(this.encryptionPassword);
+    ClientLogger.debug('Configuration updated and modules reinitialized');
+  },
+};
 
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
@@ -157,10 +246,7 @@ if (typeof window !== 'undefined') {
   });
 }
 
-const SessionClientModule = {
-  atom,
-  useAtom,
-  updateConfig,
-};
+// Initialize the module without encryption by default
+SessionClientModule.initialize();
 
 export default SessionClientModule;

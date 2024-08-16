@@ -3,9 +3,9 @@
 import { useAtom as jotaiUseAtom } from 'jotai';
 import { atomWithStorage } from 'jotai/utils';
 import { ClientLogger } from 'goobs-testing';
-import { GlobalConfig, SessionCacheConfig, EncryptedValue } from '../types';
+import { GlobalConfig, SessionCacheConfig } from '../types';
 import { ClientCompressionModule as ClientCompressionModuleImport } from './compression.client';
-import { ClientEncryptionModule } from './encryption.client';
+import { EncryptedValue, ClientEncryptionModule } from 'goobs-encryption';
 import HitCountModule from './hitCount.client';
 import ClientLastDateModule from './lastDate.client';
 

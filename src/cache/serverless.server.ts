@@ -8,13 +8,12 @@ import {
   CacheResult,
   GlobalConfig,
   StorageInterface,
-  EncryptedValue,
 } from '../types';
 import ServerHitCountModule from '../utils/hitCount.server';
 import ServerLastDateModule from '../utils/lastDate.server';
 import { ServerLogger } from 'goobs-testing';
 import { ServerCompressionModule } from '../utils/compression.server';
-import { ServerEncryptionModule } from '../utils/encryption.server';
+import { ServerEncryptionModule, EncryptedValue } from 'goobs-encryption';
 
 let serverlessCache: ServerlessCache | null = null;
 

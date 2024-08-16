@@ -1,9 +1,9 @@
 'use client';
 
 import { ClientLogger } from 'goobs-testing';
-import { GlobalConfig, SessionCacheConfig, EncryptedValue } from '../types';
+import { EncryptedValue, ClientEncryptionModule } from 'goobs-encryption';
 import { ClientCompressionModule as ClientCompressionModuleImport } from './compression.client';
-import { ClientEncryptionModule } from './encryption.client';
+import { GlobalConfig, SessionCacheConfig } from '../types';
 import HitCountModule from './hitCount.client';
 import ClientLastDateModule from './lastDate.client';
 

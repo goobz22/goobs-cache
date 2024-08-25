@@ -65,8 +65,6 @@ export const CookieUtils = {
     }
 
     ClientCompressionModule.initialize(this.sessionConfig.compression, this.globalConfig);
-    HitCountModule.initializeLogger(this.globalConfig);
-    ClientLastDateModule.initializeLogger(this.globalConfig);
 
     ClientLogger.debug('CookieUtils initialized successfully');
   },

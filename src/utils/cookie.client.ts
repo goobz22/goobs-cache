@@ -1,24 +1,31 @@
 'use client';
 
 import { ClientLogger } from 'goobs-testing';
-import { EncryptedValue, ClientEncryptionModule } from 'goobs-encryption';
+import { ClientEncryptionModule, EncryptedData } from 'goobs-encryption';
 import { ClientCompressionModule as ClientCompressionModuleImport } from './compression.client';
-import { GlobalConfig, SessionCacheConfig } from '../types';
+import { GlobalConfig } from '../types';
 import HitCountModule from './hitCount.client';
 import ClientLastDateModule from './lastDate.client';
 
 // Extend the ClientCompressionModule type with an initialize method
 const ClientCompressionModule: typeof ClientCompressionModuleImport & {
-  initialize: (compression: SessionCacheConfig['compression'], globalConfig: GlobalConfig) => void;
+  initialize: (compression: { compressionLevel: number }, globalConfig: GlobalConfig) => void;
 } = {
   ...ClientCompressionModuleImport,
   initialize: () => {}, // Add a no-op initialize method if it doesn't exist
 };
 
-const defaultSessionConfig: Omit<SessionCacheConfig, 'encryption'> = {
+interface SessionConfig {
+  cacheSize: number;
+  cacheMaxAge: number;
+  compression: {
+    compressionLevel: number;
+  };
+}
+
+const defaultSessionConfig: SessionConfig = {
   cacheSize: 5000,
   cacheMaxAge: 1800000,
-  evictionPolicy: 'lru',
   compression: {
     compressionLevel: -1,
   },
@@ -51,15 +58,7 @@ export const CookieUtils = {
 
     if (this.encryptionPassword) {
       ClientLogger.debug('Initializing encryption module');
-      ClientEncryptionModule.initialize(
-        {
-          algorithm: 'aes-256-gcm',
-          encryptionPassword: this.encryptionPassword,
-          keyCheckIntervalMs: 86400000,
-          keyRotationIntervalMs: 7776000000,
-        },
-        this.globalConfig,
-      );
+      ClientEncryptionModule.initialize(this.encryptionPassword, this.globalConfig);
     } else {
       ClientLogger.debug('Encryption disabled: No encryption password provided');
     }
@@ -69,7 +68,7 @@ export const CookieUtils = {
     ClientLogger.debug('CookieUtils initialized successfully');
   },
 
-  getCookie(name: string): string | undefined {
+  getCookie<T>(name: string): T | undefined {
     ClientLogger.debug('Getting cookie', { name });
     const cookieValue = document.cookie
       .split('; ')
@@ -88,8 +87,8 @@ export const CookieUtils = {
 
         if (this.encryptionPassword) {
           ClientLogger.debug('Decrypting cookie value', { name });
-          let decrypted: Uint8Array | null = null;
-          ClientEncryptionModule.decrypt(parsedValue as EncryptedValue, (result) => {
+          let decrypted: T | null = null;
+          ClientEncryptionModule.decrypt<T>(parsedValue, (result) => {
             decrypted = result;
           });
           if (decrypted) {
@@ -103,7 +102,7 @@ export const CookieUtils = {
         }
 
         ClientLogger.debug('Decompressing cookie value', { name });
-        const decompressed = ClientCompressionModule.decompressData(parsedValue, 'string');
+        const decompressed = ClientCompressionModule.decompressData(parsedValue);
         if (decompressed === null) {
           ClientLogger.warn('Decompression failed', { name });
           return undefined;
@@ -129,7 +128,7 @@ export const CookieUtils = {
           'cookie',
         );
 
-        const result = JSON.parse(decompressed as string);
+        const result = JSON.parse(decompressed as string) as T;
         ClientLogger.debug('Cookie retrieved successfully', {
           name,
           resultType: typeof result,
@@ -145,9 +144,9 @@ export const CookieUtils = {
     }
   },
 
-  setCookie(
+  setCookie<T>(
     name: string,
-    value: string,
+    value: T,
     options: {
       expires?: Date;
       maxAge?: number;
@@ -161,7 +160,6 @@ export const CookieUtils = {
     ClientLogger.debug('Setting cookie', {
       name,
       valueType: typeof value,
-      valueLength: value.length,
       options,
     });
 
@@ -186,8 +184,8 @@ export const CookieUtils = {
     let cookieValue: string;
     if (this.encryptionPassword) {
       ClientLogger.debug('Encrypting compressed cookie value', { name });
-      let encrypted: EncryptedValue | undefined;
-      ClientEncryptionModule.encrypt(compressed.data, (result) => {
+      let encrypted: EncryptedData<typeof compressed.data> | null = null;
+      ClientEncryptionModule.encrypt<typeof compressed.data>(compressed.data, (result) => {
         encrypted = result;
       });
       if (encrypted) {
@@ -235,7 +233,7 @@ export const CookieUtils = {
       lastAccessedDate: new Date(),
     });
 
-    ClientLogger.debug(`Cookie ${name} set successfully`, { valueLength: value.length });
+    ClientLogger.debug(`Cookie ${name} set successfully`);
   },
 
   deleteCookie(name: string): void {
@@ -246,7 +244,7 @@ export const CookieUtils = {
 
   hasConsentCookie(): boolean {
     ClientLogger.debug('Checking for consent cookie');
-    const consentCookie = this.getCookie('cookie_consent');
+    const consentCookie = this.getCookie<string>('cookie_consent');
     const hasConsent = consentCookie === 'true';
     ClientLogger.debug('Consent cookie check result', { hasConsent });
     return hasConsent;
@@ -254,7 +252,7 @@ export const CookieUtils = {
 
   setConsentCookie(consent: boolean): void {
     ClientLogger.debug('Setting consent cookie', { consent });
-    this.setCookie('cookie_consent', consent.toString(), {
+    this.setCookie<string>('cookie_consent', consent.toString(), {
       maxAge: 365 * 24 * 60 * 60, // 1 year
       path: '/',
       secure: true,
@@ -264,7 +262,7 @@ export const CookieUtils = {
   },
 
   updateConfig(
-    newSessionConfig?: Partial<Omit<SessionCacheConfig, 'encryption'>>,
+    newSessionConfig?: Partial<SessionConfig>,
     newGlobalConfig?: Partial<GlobalConfig>,
     newEncryptionPassword?: string,
   ): void {

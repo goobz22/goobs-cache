@@ -3,24 +3,31 @@
 import { useAtom as jotaiUseAtom } from 'jotai';
 import { atomWithStorage } from 'jotai/utils';
 import { ClientLogger } from 'goobs-testing';
-import { GlobalConfig, SessionCacheConfig } from '../types';
+import { GlobalConfig } from '../types';
 import { ClientCompressionModule as ClientCompressionModuleImport } from './compression.client';
-import { EncryptedValue, ClientEncryptionModule } from 'goobs-encryption';
+import { ClientEncryptionModule, EncryptedData } from 'goobs-encryption';
 import HitCountModule from './hitCount.client';
 import ClientLastDateModule from './lastDate.client';
 
 // Extend the ClientCompressionModule type with an initialize method
 const ClientCompressionModule: typeof ClientCompressionModuleImport & {
-  initialize: (compression: SessionCacheConfig['compression'], globalConfig: GlobalConfig) => void;
+  initialize: (compression: { compressionLevel: number }, globalConfig: GlobalConfig) => void;
 } = {
   ...ClientCompressionModuleImport,
   initialize: () => {}, // Add a no-op initialize method if it doesn't exist
 };
 
-const defaultSessionConfig: Omit<SessionCacheConfig, 'encryption'> = {
+interface SessionConfig {
+  cacheSize: number;
+  cacheMaxAge: number;
+  compression: {
+    compressionLevel: number;
+  };
+}
+
+const defaultSessionConfig: SessionConfig = {
   cacheSize: 5000,
   cacheMaxAge: 1800000,
-  evictionPolicy: 'lru',
   compression: {
     compressionLevel: -1,
   },
@@ -54,15 +61,7 @@ const JotaiClientModule = {
 
     if (this.encryptionPassword) {
       ClientLogger.debug('Initializing encryption module');
-      ClientEncryptionModule.initialize(
-        {
-          algorithm: 'aes-256-gcm',
-          encryptionPassword: this.encryptionPassword,
-          keyCheckIntervalMs: 86400000,
-          keyRotationIntervalMs: 7776000000,
-        },
-        this.globalConfig,
-      );
+      ClientEncryptionModule.initialize(this.encryptionPassword, this.globalConfig);
     } else {
       ClientLogger.debug('Encryption disabled: No encryption password provided');
     }
@@ -85,8 +84,8 @@ const JotaiClientModule = {
 
             if (this.encryptionPassword) {
               ClientLogger.debug('Decrypting item', { key });
-              let decrypted: Uint8Array | null = null;
-              ClientEncryptionModule.decrypt(parsedItem as EncryptedValue, (result) => {
+              let decrypted: Value | null = null;
+              ClientEncryptionModule.decrypt<Value>(parsedItem, (result) => {
                 decrypted = result;
               });
               if (decrypted) {
@@ -101,19 +100,24 @@ const JotaiClientModule = {
             }
 
             ClientLogger.debug('Decompressing item', { key });
-            const decompressed = ClientCompressionModule.decompressData(parsedItem, 'string');
+            const decompressed = ClientCompressionModule.decompressData(parsedItem);
             if (decompressed === null) {
               ClientLogger.warn('Decompression failed, using initial value', { key });
               return initialValue;
             }
+
             let result: Value;
             if (typeof decompressed === 'string') {
               result = JSON.parse(decompressed);
-            } else {
+            } else if (decompressed instanceof Uint8Array) {
               // If decompressed is a Uint8Array, convert it to a string
               const decoder = new TextDecoder();
               result = JSON.parse(decoder.decode(decompressed));
+            } else {
+              // If decompressed is neither string nor Uint8Array, assume it's already the correct type
+              result = decompressed as Value;
             }
+
             ClientLogger.debug('Successfully retrieved and processed item', { key, result });
             return result;
           } catch (error) {
@@ -121,6 +125,7 @@ const JotaiClientModule = {
             return initialValue;
           }
         }
+
         if (!this.itemNotFoundCache) {
           this.itemNotFoundCache = new Set<string>();
         }
@@ -143,12 +148,15 @@ const JotaiClientModule = {
 
         if (this.encryptionPassword) {
           ClientLogger.debug('Encrypting value', { key, isCompressed });
-          let encrypted: EncryptedValue | undefined;
-          ClientEncryptionModule.encrypt(dataToStore, (result) => {
+          let encrypted: EncryptedData<typeof dataToStore> | null = null;
+          ClientEncryptionModule.encrypt<typeof dataToStore>(dataToStore, (result) => {
             encrypted = result;
           });
           if (encrypted) {
-            dataToStore = JSON.stringify({ ...encrypted, isCompressed });
+            dataToStore = JSON.stringify({
+              encryptedData: encrypted,
+              isCompressed: isCompressed,
+            });
             ClientLogger.debug('Encryption successful', {
               encryptedLength: JSON.stringify(dataToStore).length,
             });
@@ -198,7 +206,7 @@ const JotaiClientModule = {
   useAtom: jotaiUseAtom,
 
   updateConfig(
-    newSessionConfig?: Partial<Omit<SessionCacheConfig, 'encryption'>>,
+    newSessionConfig?: Partial<SessionConfig>,
     newGlobalConfig?: Partial<GlobalConfig>,
     newEncryptionPassword?: string,
   ): void {

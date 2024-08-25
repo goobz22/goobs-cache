@@ -1,5 +1,4 @@
 'use server';
-
 import { gzip, gunzip } from 'zlib';
 import { promisify } from 'util';
 import { GlobalConfig } from '../types';
@@ -18,17 +17,24 @@ export const ServerCompressionModule = {
     logDirectory: 'logs',
   } as GlobalConfig,
 
-  async compressData(data: string): Promise<Buffer> {
+  async compressData<T>(data: T): Promise<{ data: T; compressed: boolean }> {
     await ServerLogger.info('Starting data compression', {
-      dataLength: data.length,
-      compressionLevel: -1,
+      dataType: typeof data,
     });
 
     try {
-      const inputBuffer = Buffer.from(data);
+      const serializedData = JSON.stringify(data);
+      const inputBuffer = Buffer.from(serializedData);
+
       await ServerLogger.debug('Created input buffer', {
         bufferLength: inputBuffer.length,
       });
+
+      const COMPRESSION_THRESHOLD = 100; // bytes
+
+      if (inputBuffer.length < COMPRESSION_THRESHOLD) {
+        return { data, compressed: false };
+      }
 
       const startTime = process.hrtime();
       const compressionLevel = -1;
@@ -37,6 +43,7 @@ export const ServerCompressionModule = {
       const compressionTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
 
       const compressionRatio = (compressedData.length / inputBuffer.length) * 100;
+
       await ServerLogger.info('Compression successful', {
         inputLength: inputBuffer.length,
         compressedLength: compressedData.length,
@@ -44,36 +51,42 @@ export const ServerCompressionModule = {
         compressionTime: `${compressionTime.toFixed(2)}ms`,
       });
 
-      return compressedData;
+      return { data: compressedData as unknown as T, compressed: true };
     } catch (error) {
       await ServerLogger.error('Compression failed', {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
-      throw error;
+      return { data, compressed: false };
     }
   },
 
-  async decompressData(compressedData: Buffer): Promise<string> {
+  async decompressData<T>(compressedData: T): Promise<T> {
     await ServerLogger.info('Starting data decompression', {
-      compressedLength: compressedData.length,
+      compressedDataType: typeof compressedData,
     });
 
     try {
+      const buffer = Buffer.isBuffer(compressedData)
+        ? compressedData
+        : Buffer.from(JSON.stringify(compressedData));
+
       const startTime = process.hrtime();
-      const decompressedData = await gunzipAsync(compressedData);
+      const decompressedData = await gunzipAsync(buffer);
       const endTime = process.hrtime(startTime);
       const decompressionTime = (endTime[0] * 1e9 + endTime[1]) / 1e6;
 
       const decompressedString = decompressedData.toString('utf-8');
+      const result = JSON.parse(decompressedString) as T;
+
       await ServerLogger.info('Decompression successful', {
-        compressedLength: compressedData.length,
+        compressedLength: buffer.length,
         decompressedLength: decompressedData.length,
         decompressedStringLength: decompressedString.length,
         decompressionTime: `${decompressionTime.toFixed(2)}ms`,
       });
 
-      return decompressedString;
+      return result;
     } catch (error) {
       await ServerLogger.error('Decompression failed', {
         error: error instanceof Error ? error.message : String(error),

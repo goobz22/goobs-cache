@@ -1,365 +1,231 @@
 'use server';
 
-import { LRUCache } from 'lru-cache';
 import {
-  ServerlessCacheConfig,
-  EvictionPolicy,
-  DataValue,
-  CacheResult,
-  GlobalConfig,
-  StorageInterface,
-} from '../types';
-import ServerHitCountModule from '../utils/hitCount.server';
-import ServerLastDateModule from '../utils/lastDate.server';
+  R2Bucket,
+  KVNamespace,
+  ScheduledEvent,
+  R2ListOptions,
+  R2Objects,
+} from '@cloudflare/workers-types';
 import { ServerLogger } from 'goobs-testing';
 import { ServerCompressionModule } from '../utils/compression.server';
-import { ServerEncryptionModule, EncryptedValue } from 'goobs-encryption';
+import { ServerEncryptionModule, EncryptedData } from 'goobs-encryption';
+import { GlobalConfig } from '../types';
 
-let serverlessCache: ServerlessCache | null = null;
-
-interface CacheStructure {
-  [identifier: string]: {
-    [storeName: string]: LRUCache<string, CacheResult>;
-  };
+interface CacheEntry<T> {
+  value: T;
+  expirationDate: number;
+  lastUpdatedDate: number;
+  lastAccessedDate: number;
+  hitCount: number;
 }
 
-class ServerlessCache implements StorageInterface {
-  private cache: CacheStructure = {};
+interface ServerlessCacheConfig {
+  cacheMaxAge: number;
+  compressionThreshold: number;
+  encryptionEnabled: boolean;
+  encryptionPassword: string;
+}
 
+interface Env {
+  R2_BUCKET: R2Bucket;
+  CACHE_CONFIG: KVNamespace;
+}
+
+class ServerlessR2Cache {
   private constructor(
     private config: ServerlessCacheConfig,
     private globalConfig: GlobalConfig,
-    private encryptionPassword: string,
+    private r2Bucket: R2Bucket,
   ) {
     ServerLogger.initializeLogger(this.globalConfig);
-    ServerHitCountModule.initializeLogger(this.globalConfig);
-    ServerLastDateModule.initializeLogger(this.globalConfig);
-
-    // Instead of calling initialize, we'll set the globalConfig directly
     ServerCompressionModule.globalConfig = this.globalConfig;
-
-    ServerEncryptionModule.initialize(
-      { ...this.config.encryption, encryptionPassword: this.encryptionPassword },
-      this.globalConfig,
-    );
-    ServerLogger.info('Initializing ServerlessCache', {
-      config: { ...config, encryptionPassword: '[REDACTED]' },
-      globalConfig: { ...globalConfig, encryptionPassword: '[REDACTED]' },
-    });
+    if (this.config.encryptionEnabled) {
+      ServerEncryptionModule.initialize(this.config.encryptionPassword, this.globalConfig);
+    }
   }
+
   static async create(
     config: ServerlessCacheConfig,
     globalConfig: GlobalConfig,
-    encryptionPassword: string,
-  ): Promise<ServerlessCache> {
-    return new ServerlessCache(config, globalConfig, encryptionPassword);
+    r2Bucket: R2Bucket,
+  ): Promise<ServerlessR2Cache> {
+    return new ServerlessR2Cache(config, globalConfig, r2Bucket);
   }
 
-  private getOrCreateCache(identifier: string, storeName: string): LRUCache<string, CacheResult> {
-    const startTime = process.hrtime();
-    ServerLogger.info(`Getting or creating cache for ${identifier}/${storeName}`);
-    if (!this.cache[identifier]) {
-      this.cache[identifier] = {};
-    }
-    if (!this.cache[identifier][storeName]) {
-      this.cache[identifier][storeName] = new LRUCache<string, CacheResult>({
-        max: this.config.cacheSize,
-        ttl: this.config.cacheMaxAge,
-        updateAgeOnGet: true,
-      });
-      ServerLogger.info(`Created new LRUCache for ${identifier}/${storeName}`);
-    }
-    const [seconds, nanoseconds] = process.hrtime(startTime);
-    const duration = seconds * 1000 + nanoseconds / 1e6;
-    ServerLogger.debug('getOrCreateCache operation completed', {
-      duration: `${duration.toFixed(2)}ms`,
-    });
-    return this.cache[identifier][storeName];
+  private getR2Key(identifier: string, storeName: string): string {
+    return `${identifier}:${storeName}`;
   }
 
-  async get(identifier: string, storeName: string): Promise<CacheResult[]> {
-    const startTime = process.hrtime();
-    ServerLogger.info(`Getting cache value for ${identifier}/${storeName}`);
+  async get<T>(identifier: string, storeName: string): Promise<T | null> {
+    const key = this.getR2Key(identifier, storeName);
     try {
-      const cache = this.getOrCreateCache(identifier, storeName);
-      const result = cache.get(`${identifier}:${storeName}`);
-      if (result) {
-        result.getHitCount++;
-        result.lastAccessedDate = new Date();
-        cache.set(`${identifier}:${storeName}`, result);
-        await ServerHitCountModule.incrementGetHitCount(
-          async (k) => {
-            const item = cache.get(k);
-            return item ? item.getHitCount.toString() : '0';
-          },
-          async (k, v) => {
-            const item = cache.get(k);
-            if (item) {
-              item.getHitCount = parseInt(v, 10);
-              cache.set(k, item);
-            }
-          },
-          identifier,
-          storeName,
-        );
-        await ServerLastDateModule.updateLastAccessedDate(
-          async (k, v) => {
-            const item = cache.get(k);
-            if (item) {
-              item.lastAccessedDate = new Date(v);
-              cache.set(k, item);
-            }
-          },
-          identifier,
-          storeName,
-        );
+      const object = await this.r2Bucket.get(key);
 
-        // Decrypt the value
-        const decryptedValue = await ServerEncryptionModule.decrypt(result.value as EncryptedValue);
-        const decompressedValue = await ServerCompressionModule.decompressData(
-          Buffer.from(decryptedValue),
-        );
-        result.value = JSON.parse(decompressedValue);
+      if (!object) {
+        return null;
       }
-      const [seconds, nanoseconds] = process.hrtime(startTime);
-      const duration = seconds * 1000 + nanoseconds / 1e6;
-      ServerLogger.info(`Cache value retrieved for ${identifier}/${storeName}`, {
-        duration: `${duration.toFixed(2)}ms`,
-      });
-      return result ? [result] : [];
+
+      const entry: CacheEntry<T> = JSON.parse(await object.text());
+
+      if (Date.now() > entry.expirationDate) {
+        await this.r2Bucket.delete(key);
+        return null;
+      }
+
+      entry.hitCount++;
+      entry.lastAccessedDate = Date.now();
+      await this.r2Bucket.put(key, JSON.stringify(entry));
+
+      let value = entry.value;
+      if (this.config.encryptionEnabled) {
+        value = await ServerEncryptionModule.decrypt<T>(value as unknown as EncryptedData<T>);
+      }
+      if (typeof value === 'string' && value.startsWith('compressed:')) {
+        const compressedString = value.slice(11); // Remove 'compressed:' prefix
+        const decompressedString = await ServerCompressionModule.decompressData(compressedString);
+        value = JSON.parse(decompressedString) as T;
+      }
+
+      return value;
     } catch (error) {
-      ServerLogger.error(`Error getting cache value for ${identifier}/${storeName}:`, {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+      await ServerLogger.error(`Error getting cache value for ${identifier}/${storeName}:`, {
+        error,
       });
-      throw error;
+      return null;
     }
   }
 
-  async set(identifier: string, storeName: string, items: CacheResult[]): Promise<void> {
-    const startTime = process.hrtime();
-    ServerLogger.info(`Setting cache value for ${identifier}/${storeName}`);
+  async set<T>(identifier: string, storeName: string, value: T): Promise<void> {
+    const key = this.getR2Key(identifier, storeName);
     try {
-      const cache = this.getOrCreateCache(identifier, storeName);
-      for (const item of items) {
-        item.setHitCount++;
-        item.lastUpdatedDate = new Date();
-
-        // Compress and encrypt the value
-        const compressedValue = await ServerCompressionModule.compressData(
-          JSON.stringify(item.value),
-        );
-        const encryptedValue = await ServerEncryptionModule.encrypt(
-          Uint8Array.from(compressedValue),
-        );
-        item.value = encryptedValue;
-
-        cache.set(`${identifier}:${storeName}`, item);
+      let processedValue: T | string | EncryptedData<T> = value;
+      if (
+        typeof processedValue === 'string' &&
+        processedValue.length > this.config.compressionThreshold
+      ) {
+        const compressedData = await ServerCompressionModule.compressData(processedValue);
+        if (compressedData !== null && compressedData.compressed) {
+          processedValue = 'compressed:' + compressedData.data.toString();
+        }
       }
-      await ServerHitCountModule.incrementSetHitCount(
-        async (k) => {
-          const item = cache.get(k);
-          return item ? item.setHitCount.toString() : '0';
-        },
-        async (k, v) => {
-          const item = cache.get(k);
-          if (item) {
-            item.setHitCount = parseInt(v, 10);
-            cache.set(k, item);
-          }
-        },
-        identifier,
-        storeName,
-      );
-      await ServerLastDateModule.updateLastDates(
-        async (k, v) => {
-          const item = cache.get(k);
-          if (item) {
-            item.lastUpdatedDate = new Date(v);
-            item.lastAccessedDate = new Date(v);
-            cache.set(k, item);
-          }
-        },
-        identifier,
-        storeName,
-        { lastUpdatedDate: new Date(), lastAccessedDate: new Date() },
-      );
-      const [seconds, nanoseconds] = process.hrtime(startTime);
-      const duration = seconds * 1000 + nanoseconds / 1e6;
-      ServerLogger.info(`Cache value set successfully for ${identifier}/${storeName}`, {
-        duration: `${duration.toFixed(2)}ms`,
-      });
+      if (this.config.encryptionEnabled) {
+        processedValue = await ServerEncryptionModule.encrypt(processedValue as T);
+      }
+
+      const entry: CacheEntry<typeof processedValue> = {
+        value: processedValue,
+        expirationDate: Date.now() + this.config.cacheMaxAge,
+        lastUpdatedDate: Date.now(),
+        lastAccessedDate: Date.now(),
+        hitCount: 0,
+      };
+
+      await this.r2Bucket.put(key, JSON.stringify(entry));
     } catch (error) {
-      ServerLogger.error(`Error setting cache value for ${identifier}/${storeName}:`, {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+      await ServerLogger.error(`Error setting cache value for ${identifier}/${storeName}:`, {
+        error,
       });
-      throw error;
     }
   }
 
   async remove(identifier: string, storeName: string): Promise<void> {
-    const startTime = process.hrtime();
-    ServerLogger.info(`Removing cache value for ${identifier}/${storeName}`);
+    const key = this.getR2Key(identifier, storeName);
     try {
-      const cache = this.getOrCreateCache(identifier, storeName);
-      cache.delete(`${identifier}:${storeName}`);
-      const [seconds, nanoseconds] = process.hrtime(startTime);
-      const duration = seconds * 1000 + nanoseconds / 1e6;
-      ServerLogger.info(`Cache value removed for ${identifier}/${storeName}`, {
-        duration: `${duration.toFixed(2)}ms`,
-      });
+      await this.r2Bucket.delete(key);
     } catch (error) {
-      ServerLogger.error(`Error removing cache value for ${identifier}/${storeName}:`, {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+      await ServerLogger.error(`Error removing cache value for ${identifier}/${storeName}:`, {
+        error,
       });
-      throw error;
     }
   }
 
   async clear(): Promise<void> {
-    const startTime = process.hrtime();
-    ServerLogger.info('Clearing all cache values');
     try {
-      this.cache = {};
-      const [seconds, nanoseconds] = process.hrtime(startTime);
-      const duration = seconds * 1000 + nanoseconds / 1e6;
-      ServerLogger.info('All cache values cleared', { duration: `${duration.toFixed(2)}ms` });
+      let cursor: string | undefined;
+      do {
+        const listOptions: R2ListOptions = { limit: 1000 };
+        if (cursor) listOptions.cursor = cursor;
+        const list: R2Objects = await this.r2Bucket.list(listOptions);
+        await Promise.all(list.objects.map((obj) => this.r2Bucket.delete(obj.key)));
+        cursor = list.truncated ? list.cursor : undefined;
+      } while (cursor);
     } catch (error) {
-      ServerLogger.error('Error clearing all cache values:', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      throw error;
+      await ServerLogger.error('Error clearing cache:', { error });
     }
   }
 
-  async setEvictionPolicy(policy: EvictionPolicy): Promise<void> {
-    const startTime = process.hrtime();
-    ServerLogger.info(`Setting eviction policy to ${policy}`);
+  async cleanupExpiredItems(): Promise<void> {
     try {
-      // Implement the eviction policy logic here
-      // This might involve recreating LRUCache instances with new options
-      const [seconds, nanoseconds] = process.hrtime(startTime);
-      const duration = seconds * 1000 + nanoseconds / 1e6;
-      ServerLogger.info(`Eviction policy set successfully to ${policy}`, {
-        duration: `${duration.toFixed(2)}ms`,
-      });
+      let cursor: string | undefined;
+      const now = Date.now();
+      do {
+        const listOptions: R2ListOptions = { limit: 1000 };
+        if (cursor) listOptions.cursor = cursor;
+        const list: R2Objects = await this.r2Bucket.list(listOptions);
+        await Promise.all(
+          list.objects.map(async (obj) => {
+            const entry: CacheEntry<unknown> = JSON.parse(
+              await (await this.r2Bucket.get(obj.key))!.text(),
+            );
+            if (entry.expirationDate < now) {
+              await this.r2Bucket.delete(obj.key);
+            }
+          }),
+        );
+        cursor = list.truncated ? list.cursor : undefined;
+      } while (cursor);
     } catch (error) {
-      ServerLogger.error(`Error setting eviction policy to ${policy}:`, {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      throw error;
-    }
-  }
-
-  async updateConfig(
-    newConfig: ServerlessCacheConfig,
-    newGlobalConfig: GlobalConfig,
-    newEncryptionPassword: string,
-  ): Promise<void> {
-    ServerLogger.info('Updating ServerlessCache configuration', {
-      oldConfig: { ...this.config, encryptionPassword: '[REDACTED]' },
-      newConfig: { ...newConfig, encryptionPassword: '[REDACTED]' },
-      oldGlobalConfig: { ...this.globalConfig, encryptionPassword: '[REDACTED]' },
-      newGlobalConfig: { ...newGlobalConfig, encryptionPassword: '[REDACTED]' },
-    });
-    this.config = newConfig;
-    this.globalConfig = newGlobalConfig;
-    this.encryptionPassword = newEncryptionPassword;
-    ServerLogger.initializeLogger(newGlobalConfig);
-    ServerHitCountModule.initializeLogger(newGlobalConfig);
-    ServerLastDateModule.initializeLogger(newGlobalConfig);
-
-    // Update ServerCompressionModule's globalConfig directly
-    ServerCompressionModule.globalConfig = this.globalConfig;
-
-    ServerEncryptionModule.updateConfig(
-      { ...this.config.encryption, encryptionPassword: this.encryptionPassword },
-      this.globalConfig,
-    );
-
-    // Update configuration for all caches
-    for (const identifier in this.cache) {
-      for (const storeName in this.cache[identifier]) {
-        const newCache = new LRUCache<string, CacheResult>({
-          max: this.config.cacheSize,
-          ttl: this.config.cacheMaxAge,
-          updateAgeOnGet: true,
-        });
-        this.cache[identifier][storeName].forEach((value, key) => {
-          newCache.set(key, value);
-        });
-        this.cache[identifier][storeName] = newCache;
-      }
+      await ServerLogger.error('Error cleaning up expired items:', { error });
     }
   }
 }
 
-async function initializeServerlessCache(
-  config: ServerlessCacheConfig,
-  globalConfig: GlobalConfig,
-  encryptionPassword: string,
-): Promise<ServerlessCache> {
-  const startTime = process.hrtime();
-  ServerLogger.debug('Initializing serverless cache...', {
-    currentInstance: serverlessCache ? 'exists' : 'null',
-  });
+let serverlessCache: ServerlessR2Cache | null = null;
 
-  try {
-    if (!serverlessCache) {
-      serverlessCache = await ServerlessCache.create(config, globalConfig, encryptionPassword);
-      const [seconds, nanoseconds] = process.hrtime(startTime);
-      const duration = seconds * 1000 + nanoseconds / 1e6;
-      ServerLogger.info('Serverless cache initialized successfully.', {
-        duration: `${duration.toFixed(2)}ms`,
-      });
+async function initializeServerlessCache(env: Env): Promise<ServerlessR2Cache> {
+  if (!serverlessCache) {
+    const configString = await env.CACHE_CONFIG.get('currentConfig');
+    let config: ServerlessCacheConfig;
+    let globalConfig: GlobalConfig;
+
+    if (configString) {
+      ({ config, globalConfig } = JSON.parse(configString));
     } else {
-      ServerLogger.debug('Serverless cache already initialized, reusing existing instance.');
+      config = {
+        cacheMaxAge: 3600000,
+        compressionThreshold: 1024,
+        encryptionEnabled: false,
+        encryptionPassword: 'default-password',
+      };
+      globalConfig = {
+        keySize: 256,
+        batchSize: 100,
+        autoTuneInterval: 3600000,
+        loggingEnabled: true,
+        logLevel: 'debug',
+        logDirectory: 'logs',
+        initialize: () => {},
+      };
     }
-    return serverlessCache;
-  } catch (error) {
-    ServerLogger.error('Failed to initialize serverless cache', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    throw error;
+
+    serverlessCache = await ServerlessR2Cache.create(config, globalConfig, env.R2_BUCKET);
   }
+  return serverlessCache;
 }
 
-function createServerlessAtom(
-  config: ServerlessCacheConfig,
-  globalConfig: GlobalConfig,
-  encryptionPassword: string,
-  identifier: string,
-  storeName: string,
-) {
+function createServerlessAtom(env: Env, identifier: string, storeName: string) {
   return {
-    get: async (): Promise<CacheResult | undefined> => {
-      const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
-      const result = await cache.get(identifier, storeName);
-      return result[0];
+    get: async <T>(): Promise<T | null> => {
+      const cache = await initializeServerlessCache(env);
+      return cache.get<T>(identifier, storeName);
     },
-    set: async (value: DataValue): Promise<void> => {
-      const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
-      const expirationDate = new Date(Date.now() + config.cacheMaxAge);
-      await cache.set(identifier, storeName, [
-        {
-          identifier,
-          storeName,
-          value,
-          expirationDate,
-          lastUpdatedDate: new Date(),
-          lastAccessedDate: new Date(),
-          getHitCount: 0,
-          setHitCount: 1,
-        },
-      ]);
+    set: async <T>(value: T): Promise<void> => {
+      const cache = await initializeServerlessCache(env);
+      await cache.set<T>(identifier, storeName, value);
     },
     remove: async (): Promise<void> => {
-      const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
+      const cache = await initializeServerlessCache(env);
       await cache.remove(identifier, storeName);
     },
   };
@@ -367,48 +233,73 @@ function createServerlessAtom(
 
 export const serverless = {
   atom: createServerlessAtom,
-  clear: async (
-    config: ServerlessCacheConfig,
-    globalConfig: GlobalConfig,
-    encryptionPassword: string,
-  ): Promise<void> => {
-    const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
+  clear: async (env: Env): Promise<void> => {
+    const cache = await initializeServerlessCache(env);
     await cache.clear();
   },
   updateConfig: async (
-    config: ServerlessCacheConfig,
-    globalConfig: GlobalConfig,
-    encryptionPassword: string,
+    env: Env,
+    newConfig: ServerlessCacheConfig,
+    newGlobalConfig: GlobalConfig,
   ): Promise<void> => {
-    const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
-    await cache.updateConfig(config, globalConfig, encryptionPassword);
-  },
-  setEvictionPolicy: async (
-    config: ServerlessCacheConfig,
-    globalConfig: GlobalConfig,
-    encryptionPassword: string,
-    policy: EvictionPolicy,
-  ): Promise<void> => {
-    const cache = await initializeServerlessCache(config, globalConfig, encryptionPassword);
-    await cache.setEvictionPolicy(policy);
+    await env.CACHE_CONFIG.put(
+      'currentConfig',
+      JSON.stringify({
+        config: newConfig,
+        globalConfig: newGlobalConfig,
+      }),
+    );
+    serverlessCache = null; // Force re-initialization with new config
+    if (newConfig.encryptionEnabled) {
+      ServerEncryptionModule.initialize(newConfig.encryptionPassword, newGlobalConfig);
+    }
   },
 };
 
-process.on('uncaughtException', (error: Error) => {
-  ServerLogger.error('Uncaught Exception:', {
-    error: error.message,
-    stack: error.stack,
+const serverlessModule = {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    try {
+      const url = new URL(request.url);
+
+      // Simple routing
+      if (url.pathname === '/get') {
+        const { identifier, storeName } = await request.json();
+        const result = await serverless.atom(env, identifier, storeName).get();
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } else if (url.pathname === '/set') {
+        const { identifier, storeName, value } = await request.json();
+        await serverless.atom(env, identifier, storeName).set(value);
+        return new Response('OK');
+      } else if (url.pathname === '/remove') {
+        const { identifier, storeName } = await request.json();
+        await serverless.atom(env, identifier, storeName).remove();
+        return new Response('OK');
+      } else if (url.pathname === '/clear') {
+        await serverless.clear(env);
+        return new Response('Cache cleared');
+      }
+
+      return new Response('Not Found', { status: 404 });
+    } catch (error) {
+      await ServerLogger.error('Worker error:', { error });
+      return new Response('Internal Server Error', { status: 500 });
+    }
+  },
+
+  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
+    const cache = await initializeServerlessCache(env);
+    await cache.cleanupExpiredItems();
+  },
+};
+
+// Error handling
+addEventListener('unhandledrejection', async (event: PromiseRejectionEvent) => {
+  await ServerLogger.error('Unhandled Rejection:', {
+    reason: event.reason instanceof Error ? event.reason.message : String(event.reason),
+    stack: event.reason instanceof Error ? event.reason.stack : undefined,
   });
-  // Gracefully exit the process after logging
-  process.exit(1);
 });
 
-process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
-  ServerLogger.error('Unhandled Rejection at:', {
-    promise,
-    reason: reason instanceof Error ? reason.message : String(reason),
-    stack: reason instanceof Error ? reason.stack : undefined,
-  });
-});
-
-export default serverless;
+export default serverlessModule;

@@ -1,8 +1,19 @@
 'use client';
 
-import { DataValue, CacheResult, GlobalConfig } from '../types';
+import { GlobalConfig } from '../types';
 import { ClientLogger } from 'goobs-testing';
 import CookieUtils from '../utils/cookie.client';
+
+interface CacheResult<T> {
+  identifier: string;
+  storeName: string;
+  value: T;
+  expirationDate: Date;
+  lastUpdatedDate: Date;
+  lastAccessedDate: Date;
+  getHitCount: number;
+  setHitCount: number;
+}
 
 const defaultGlobalConfig: Pick<GlobalConfig, 'loggingEnabled' | 'logLevel' | 'logDirectory'> = {
   loggingEnabled: true,
@@ -19,12 +30,12 @@ export const CookieClientModule = {
     ClientLogger.info('CookieClientModule initialized');
   },
 
-  set(identifier: string, storeName: string, value: DataValue, expirationDate: Date) {
+  set<T>(identifier: string, storeName: string, value: T, expirationDate: Date) {
     const startTime = performance.now();
     ClientLogger.info(`Setting cache value for ${identifier}/${storeName}`);
 
     try {
-      const cacheResult: CacheResult = {
+      const cacheResult: CacheResult<T> = {
         identifier,
         storeName,
         value,
@@ -52,15 +63,16 @@ export const CookieClientModule = {
     }
   },
 
-  get(identifier: string, storeName: string) {
+  get<T>(identifier: string, storeName: string): CacheResult<T> | undefined {
     const startTime = performance.now();
     ClientLogger.info(`Getting cache value for ${identifier}/${storeName}`);
 
     try {
-      const cookieValue = CookieUtils.getCookie(`${identifier}_${storeName}`);
+      const cookieKey = `${identifier}_${storeName}`;
+      const cookieValue = CookieUtils.getCookie<string>(cookieKey);
 
       if (cookieValue) {
-        const cacheResult: CacheResult = JSON.parse(cookieValue);
+        const cacheResult: CacheResult<T> = JSON.parse(cookieValue);
 
         if (new Date(cacheResult.expirationDate) < new Date()) {
           this.remove(identifier, storeName);
@@ -141,12 +153,12 @@ export const CookieClientModule = {
     ClientLogger.info('CookieClientModule configuration updated');
   },
 
-  createAtom(identifier: string, storeName: string) {
+  createAtom<T>(identifier: string, storeName: string) {
     return {
-      get: () => this.get(identifier, storeName),
-      set: (value: DataValue) => {
+      get: () => this.get<T>(identifier, storeName),
+      set: (value: T) => {
         const expirationDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year from now
-        this.set(identifier, storeName, value, expirationDate);
+        this.set<T>(identifier, storeName, value, expirationDate);
       },
       remove: () => this.remove(identifier, storeName),
     };

@@ -1,6 +1,6 @@
 'use client';
 
-import SessionClientModule from '../utils/session.client';
+import SessionClientModule from '../utils/jotai.client';
 import { ClientLogger } from 'goobs-testing';
 import { GlobalConfig } from '../types';
 

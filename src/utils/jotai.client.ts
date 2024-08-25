@@ -68,20 +68,15 @@ const SessionClientModule = {
     }
 
     ClientCompressionModule.initialize(this.sessionConfig.compression, this.globalConfig);
-    HitCountModule.initializeLogger(this.globalConfig);
-    ClientLastDateModule.initializeLogger(this.globalConfig);
 
     ClientLogger.debug('SessionClientModule initialized successfully');
   },
 
   atom<Value>(initialValue: Value) {
-    ClientLogger.debug('Creating atom', { initialValue });
     const key = `atom-${Math.random().toString(36).substr(2, 9)}`;
-    ClientLogger.debug('Generated atom key', { key });
 
     return atomWithStorage<Value>(key, initialValue, {
       getItem: (key, initialValue) => {
-        ClientLogger.debug('Getting item from storage', { key });
         const item = sessionStorage.getItem(key);
         if (item !== null) {
           try {
@@ -130,33 +125,18 @@ const SessionClientModule = {
           this.itemNotFoundCache = new Set<string>();
         }
         if (!this.itemNotFoundCache.has(key)) {
-          ClientLogger.debug('Item not found, using initial value', { key, initialValue });
           this.itemNotFoundCache.add(key);
         }
         return initialValue;
       },
       setItem: (key, value) => {
-        ClientLogger.debug('setItem called', {
-          key,
-          valueType: typeof value,
-          valueLength: JSON.stringify(value).length,
-        });
         const stringValue = JSON.stringify(value);
-        ClientLogger.debug('Value stringified', { stringLength: stringValue.length });
 
-        ClientLogger.debug('Calling compressData');
         const compressionResult = ClientCompressionModule.compressData(stringValue);
 
         if (compressionResult === null) {
-          ClientLogger.error('Compression returned null', { key });
           return;
         }
-
-        ClientLogger.debug('Compression result', {
-          compressed: compressionResult.compressed,
-          originalLength: stringValue.length,
-          compressedLength: compressionResult.data.length,
-        });
 
         let dataToStore: string | Uint8Array = compressionResult.data;
         const isCompressed = compressionResult.compressed;

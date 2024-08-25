@@ -1,6 +1,5 @@
 'use client';
-
-import SessionClientModule from '../utils/jotai.client';
+import JotaiClientModule from '../utils/jotai.client';
 import { ClientLogger } from 'goobs-testing';
 import { GlobalConfig } from '../types';
 
@@ -10,28 +9,28 @@ const defaultGlobalConfig: Pick<GlobalConfig, 'loggingEnabled' | 'logLevel' | 'l
   logDirectory: 'logs',
 };
 
-export const session = {
+export const jotai = {
   globalConfig: defaultGlobalConfig,
 
   initialize(encryptionPassword?: string) {
-    ClientLogger.debug('Initializing session module');
-    SessionClientModule.initialize(encryptionPassword);
-    ClientLogger.debug('Session module initialized');
+    ClientLogger.debug('Initializing jotai module');
+    JotaiClientModule.initialize(encryptionPassword);
+    ClientLogger.debug('Jotai module initialized');
   },
 
-  atom: SessionClientModule.atom,
-  useAtom: SessionClientModule.useAtom,
+  atom: JotaiClientModule.atom,
+  useAtom: JotaiClientModule.useAtom,
 
   updateConfig(
     newGlobalConfig?: Partial<Pick<GlobalConfig, 'loggingEnabled' | 'logLevel' | 'logDirectory'>>,
     newEncryptionPassword?: string,
   ) {
-    ClientLogger.debug('Updating session configuration');
+    ClientLogger.debug('Updating jotai configuration');
     if (newGlobalConfig) {
       this.globalConfig = { ...this.globalConfig, ...newGlobalConfig };
     }
-    SessionClientModule.updateConfig(undefined, this.globalConfig, newEncryptionPassword);
-    ClientLogger.debug('Session configuration updated');
+    JotaiClientModule.updateConfig(undefined, this.globalConfig, newEncryptionPassword);
+    ClientLogger.debug('Jotai configuration updated');
   },
 };
 
@@ -45,6 +44,6 @@ if (typeof window !== 'undefined') {
 }
 
 // Initialize the module without encryption by default
-session.initialize();
+jotai.initialize();
 
-export default session;
+export default jotai;

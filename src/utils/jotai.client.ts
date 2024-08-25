@@ -38,14 +38,14 @@ const defaultGlobalConfig: GlobalConfig = {
   },
 };
 
-const SessionClientModule = {
+const JotaiClientModule = {
   globalConfig: defaultGlobalConfig,
   sessionConfig: defaultSessionConfig,
   encryptionPassword: undefined as string | undefined,
   itemNotFoundCache: new Set<string>(),
 
   initialize(encryptionPassword?: string): void {
-    ClientLogger.debug('Initializing SessionClientModule');
+    ClientLogger.debug('Initializing JotaiClientModule');
     this.encryptionPassword = encryptionPassword;
 
     ClientLogger.debug('Initializing loggers', { globalConfig: this.globalConfig });
@@ -69,7 +69,7 @@ const SessionClientModule = {
 
     ClientCompressionModule.initialize(this.sessionConfig.compression, this.globalConfig);
 
-    ClientLogger.debug('SessionClientModule initialized successfully');
+    ClientLogger.debug('JotaiClientModule initialized successfully');
   },
 
   atom<Value>(initialValue: Value) {
@@ -227,6 +227,6 @@ if (typeof window !== 'undefined') {
 }
 
 // Initialize the module without encryption by default
-SessionClientModule.initialize();
+JotaiClientModule.initialize();
 
-export default SessionClientModule;
+export default JotaiClientModule;

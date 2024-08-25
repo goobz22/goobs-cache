@@ -1,68 +1,9 @@
 import cookie from './cache/cookie.client';
 import serverless from './cache/serverless.server';
-import session from './cache/session.client';
-import {
-  ComplexValue,
-  CacheResult,
-  StorageInterface,
-  EvictionPolicy,
-  StringValue,
-  NumberValue,
-  BooleanValue,
-  ListValue,
-  SetValue,
-  HashValue,
-  StreamValue,
-  ZSetValue,
-  HLLValue,
-  GeoValue,
-  JSONValue,
-  JSONPrimitive,
-  JSONObject,
-  JSONArray,
-  GlobalConfig,
-  DataValue,
-  LogLevel,
-  CompressionConfig,
-  BaseCacheConfig,
-  ServerlessCacheConfig,
-  SessionCacheConfig,
-  CookieCacheConfig,
-  IndividualCacheConfig,
-  CacheMode,
-  TwoLayerMode,
-} from './types';
+import jotai from './cache/jotai.client';
 
-export { cookie, serverless, session };
+import { GlobalConfig, LogLevel } from './types';
 
-export type {
-  ComplexValue,
-  CacheResult,
-  StorageInterface,
-  EvictionPolicy,
-  StringValue,
-  NumberValue,
-  BooleanValue,
-  ListValue,
-  SetValue,
-  HashValue,
-  StreamValue,
-  ZSetValue,
-  HLLValue,
-  GeoValue,
-  JSONValue,
-  JSONPrimitive,
-  JSONObject,
-  JSONArray,
-  DataValue,
-  LogLevel,
-  CompressionConfig,
-  GlobalConfig,
-  BaseCacheConfig,
-  ServerlessCacheConfig,
-  SessionCacheConfig,
-  CookieCacheConfig,
-  IndividualCacheConfig,
-  CacheMode,
-  TwoLayerMode,
-};
+export { cookie, serverless, jotai };
+
+export type { LogLevel, GlobalConfig };
